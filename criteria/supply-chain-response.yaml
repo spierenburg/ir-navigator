@@ -1,0 +1,2145 @@
+# Source of truth for this playbook's IR criteria.
+# Hand-edit freely. Re-run 'bun run build:index' after any change.
+playbook: "supply-chain-response"
+title: "Supply Chain Incident Response"
+platforms:
+  - "Defender XDR / Sentinel"
+  - "CrowdStrike Falcon"
+  - "SentinelOne"
+  - "Velociraptor"
+  - "Splunk"
+  - "Elastic / Wazuh"
+scenarios:
+  - id: "1"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Vendor or MSP Breach"
+    indicators: "a breach notice from a vendor, SaaS provider or MSP; press or leak-site reports naming them; anomalous activity from their accounts or IP ranges."
+    discriminator: "The attacker is in the vendor's environment, not yours — yet. Verify the notice first, then cut data flows and revoke every credential the vendor holds; the question is whether their access into you was used, and the answer is in your logs from the vendor's earliest access date, not from the notice. An MSP is a different incident: its RMM agent is command-and-control as SYSTEM on every host it manages, and in the Kaseya VSA incident (July 2021) the attacker pushed ransomware to downstream organisations (fewer than 1,500 by Kaseya's own count) as a “hot-fix” procedure through the agent. Disable the agent service fleet-wide, revoke the RMM's API keys, end the GDAP or DAP relationship and the Lighthouse delegations, then review every script, policy and procedure the RMM pushed in the window — those are the attacker's actions, not a patch run. The multi-tenant vendor app's secret lives in the vendor's tenant: you cannot rotate it, so get written confirmation that they did. A vendor app authorised in Salesforce, Google Workspace or Slack is cut in that platform; the Salesloft Drift tokens used against Salesforce tenants (August 2025) were untouched by any Entra action. Template: supply-chain-response."
+    attack: []
+    window: null
+  - id: "2"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Compromised Package or GitHub Action"
+    indicators: "an advisory for an npm or PyPI package, GitHub Action, OS package or base image you depend on; node on a runner spawning trufflehog, gh or an AI CLI, or talking to api.github.com during an install; new repositories, workflows or runners in your org; unexpected publishes of your own packages. Examples: Shai-Hulud npm worm (September and November 2025), Nx s1ngularity (August 2025), tj-actions/changed-files (March 2025), xz-utils (2024)."
+    discriminator: "Install is execution: a bad version that only reached a CI runner or a laptop still had that machine's secrets. Scope by “where was it installed?”, not “did it reach production?”. The 2025 worms ran inside node with no curl to catch: they harvested ~/.npmrc, cloud and GitHub credentials, published them to public repositories and workflow logs, and used the npm token to trojanise every package the victim maintained — so stage 6 (propagation) is minutes behind stage 3, and your own packages' publish history is a first-hour check, not a day-two one. xz-utils was a distro package carried into base images, not a lockfile entry: pin base images by digest and inventory OS packages in images with Syft, not only application dependencies. Do not pin Actions to tags (every tj-actions tag was moved), do not rebuild on the same caches or runners, and install with --ignore-scripts and a cooling-off period until the registry proxy allowlist is in place. Template: supply-chain-package-compromise."
+    attack: []
+    window: null
+  - id: "3"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Trojanised Vendor Update"
+    indicators: "a vendor advisory that a signed release was malicious; EDR detections on a trusted application; the application reaching unknown domains. Example: the 3CX desktop app (2023)."
+    discriminator: "Treat it as an endpoint compromise, not a patching task: the update ran with the application's privileges on every host that installed it. The signature is the dimension that changes the hunt: the installer is signed with the vendor's real certificate, so a hash block covers one file while the attacker holds the key. Hunt by signer and serial ( DeviceFileCertificateInfo, Sysmon 7, code_signature.subject_name ) for everything signed with that certificate, block the certificate itself, and read the trust flag with care — it stays valid until the CA revokes and the device fetches the CRL, and a countersignature dated before the revocation keeps the file valid afterwards. In the 3CX case the signed desktop app sideloaded a trojanised ffmpeg.dll: the main executable's hash never identified the payload, the module load did. Block the vendor's update host until it confirms a clean release, because the update channel is the delivery path; if the compromise was on the vendor's build or update server rather than a developer's key, its service accounts are what need rotating, on their side. Isolate the hosts, collect memory and a persistence snapshot, then uninstall or roll back — the pre-encryption situation. Template: supply-chain-package-compromise."
+    attack: []
+    window: null
+  - id: "4"
+    status: "active"
+    source: "research@2026-10-30 https://cursor.com/blog/claude-code-extension-security-notice https://opensourcemalware.com/blog/trojanized-claude-code-extension-plants-persistent-ssh-backdoor https://www.reuters.com/technology/cybersecurity/data-loss-prevention-company-cyberhaven-hit-by-breach-statement-says-2024-12-27/"
+    validated_at: "2026-10-31"
+    supersedes: null
+    name: "Malicious IDE or Browser Extension"
+    indicators: "a marketplace or vendor notice that an extension version was malicious; an editor or browser process (code, cursor, node under an extension host, chrome) writing to authorized_keys, LaunchAgents, cron or Startup, or opening SSH or raw TCP outbound; new extensions or versions in the endpoint extension inventory. Examples: trojanised anthropic.claude-code 2.1.313 in the Cursor Marketplace (October 2026, live about 11 hours); the Cyberhaven Chrome extension, published from a phished developer's Chrome Web Store access (December 2024)."
+    discriminator: "An extension is code that runs as the user on every launch of the editor or browser, with no install script to catch: the Claude Code loader ran when extension.js loaded. Auto-update means exposure is every host whose editor or browser was running during the window, not only who chose to install it, so scope from the extension inventory by version and by the time the bad version was live. Scope by marketplace too: one extension id is served by several marketplaces (Microsoft, Open VSX, Cursor's, a browser store), and they can differ — in the Claude Code case only Cursor's copy was malicious, so VS Code hosts with the same id and version were clean. Removing or updating the extension does not undo what it did: the planted SSH key, LaunchAgent, cron entry or scheduled task survive, so collect persistence before the cleanup. A developer endpoint holds cloud, GitHub, npm and SSH credentials; treat every one it held as exposed, as in a compromised package."
+    attack: []
+    window: null
+  - id: "5"
+    status: "active"
+    source: "research@2026-10-30 https://status.polymarket.com/cmvtuswgi00221bkzps7w21pt https://www.infostealers.com/article/polymarket-breach-alert-wallet-draining-code-found-in-a-third-party-script/ https://sansec.io/research/polyfill-supply-chain-attack"
+    validated_at: "2026-10-31"
+    supersedes: null
+    name: "Compromised Third-Party Web Script"
+    indicators: "a notice from an analytics, monitoring, chat, tag-manager or CDN provider whose script your pages load; users reporting account actions or transactions they did not make; CSP violation reports or outbound requests to a new domain from your pages; a change in the hash of a script you load without a matching vendor release. Examples: Polymarket, where wallet-draining code was served in place of DebugBear's monitoring script (October 2026); polyfill.io, where the domain's new owner served malware to 100,000+ sites (June 2024)."
+    discriminator: "None of your servers was touched, so server logs and EDR show nothing: the code ran in your users' browsers, as your site, with everything the page can reach — session tokens and API keys in localStorage, the DOM, and the logged-in session itself. At Polymarket the script read the stored API key map and signed transactions through the live trading client. The served content can be conditional: the drainer skipped geoblocked visitors, and the polyfill payload fired only on certain mobile devices at certain hours and avoided admin users, so fetching the script yourself afterwards proves nothing. Get the content that was served from the provider, a CDN archive or captured traffic. Scope by which pages loaded it and which users had a session while it was live; their tokens and keys are exposed whether or not misuse shows. Removing the tag stops new loads, not use of what was taken: revoke those sessions and keys, then self-host the script or pin it with Subresource Integrity before it returns. The provider's breach is scenario 1 on their side; the incident on yours is what ran in your users' sessions."
+    attack: []
+    window: null
+criteria:
+  - id: "supply-chain-response/defender/s2-every-external-tenant-with-a-path-into-ours-gues"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Our connection"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Every external tenant with a path into ours: guests, direct connect, GDAP and DAP"
+    why: "The vendor register is usually incomplete. Sign-ins carry the home tenant and the path used: serviceProvider is an MSP acting through a Partner Center GDAP or DAP relationship, b2bCollaboration a guest, b2bDirectConnect a Teams shared channel. Each path has a different cut, so the path matters as much as the account."
+    how: null
+    fp: "Your own MSP, Microsoft support ( microsoftSupport ) and every Teams shared-channel partner appear here legitimately. The first query is the inventory; the vendor under investigation is the filter, and any serviceProvider tenant you cannot name is its own finding."
+    query: |-
+      // Which external tenants act in ours, and by which path (serviceProvider = GDAP/DAP)
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(90d)
+      | where CrossTenantAccessType != "none" and HomeTenantId != AADTenantId
+      | summarize SignIns=count(), LastSeen=max(TimeGenerated), Users=dcount(UserPrincipalName),
+                  Apps=make_set(AppDisplayName, 20) by HomeTenantId, HomeTenantName, CrossTenantAccessType
+      // The named vendor: every account, what it reached, from where
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(90d) and HomeTenantId == "<vendor tenant id>"
+      | summarize LastSeen=max(TimeGenerated), Apps=make_set(AppDisplayName), IPs=make_set(IPAddress, 20)
+          by UserPrincipalName, UserType, CrossTenantAccessType
+    tested: null
+    attack:
+      - "T1199"
+      - "T1078.004"
+  - id: "supply-chain-response/defender/s2-vendor-owned-apps-their-permissions-and-azure-li"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Our connection"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Vendor-owned apps, their permissions, and Azure Lighthouse delegations"
+    why: "A multi-tenant vendor app has its app object, and its secret, in the vendor's tenant; AppOwnerTenantId tells you which apps those are and therefore which credentials you cannot rotate yourself. Lighthouse delegations give the MSP ARM access to subscriptions without any sign-in to your tenant, so the sign-in logs never show them."
+    how: "Non-Microsoft SaaS-to-SaaS grants (a vendor app authorised in Salesforce, Google Workspace, Slack or GitHub) do not appear in Entra at all. List them in each platform's connected-apps page: the Salesloft Drift tokens used against Salesforce in August 2025 were invisible to an Entra-only inventory."
+    fp: null
+    query: |-
+      // Service principals the vendor owns (app object, and its secret, live in their tenant)
+      AADServicePrincipalSignInLogs
+      | where TimeGenerated > ago(90d)
+      | where AppOwnerTenantId == "<vendor tenant id>" or AppId == "<vendor app id>"
+      | summarize LastSeen=max(TimeGenerated), Resources=make_set(ResourceDisplayName), IPs=make_set(IPAddress, 20)
+          by ServicePrincipalName, AppId, AppOwnerTenantId
+      // App governance: what those apps are allowed to do, and whether an admin consented
+      OAuthAppInfo
+      | where AppOwnerTenantId == "<vendor tenant id>" or AppId == "<vendor app id>"
+      | project AppName, AppId, PrivilegeLevel, Permissions, IsAdminConsented, AssignedRoles, LastUsedTime
+      // Azure Lighthouse: delegations written in the window. The current list is
+      // `az managedservices assignment list` per subscription, or Azure portal > Service providers.
+      AzureActivity
+      | where TimeGenerated > ago(90d)
+      | where OperationNameValue =~ "Microsoft.ManagedServices/registrationAssignments/write"
+      | project TimeGenerated, Caller, CallerIpAddress, ResourceId, ActivityStatusValue
+    tested: null
+    attack:
+      - "T1199"
+      - "T1078.004"
+  - id: "supply-chain-response/defender/s3-which-vendor-app-credential-is-in-use-was-one-ad"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Credentials"
+    stage_ord: 3
+    platform: "Defender XDR / Sentinel"
+    title: "Which vendor-app credential is in use, was one added, and whose tenant holds it"
+    why: "Rotating the wrong secret leaves the attacker in. A credential, consent or role assignment added during the exposure window is the attacker's own foothold and is removed, not rotated. The key id the app signs in with identifies the exact secret to rotate; if the app's owner tenant is the vendor's, that secret is on their app object and only they can rotate it."
+    how: null
+    fp: "A vendor's scheduled credential rollover fires 'Add service principal credentials' legitimately. The tell is a second credential added without the old one removed, a consent granted by a user rather than an admin, or a new key first used from an address the vendor does not own (stage 5)."
+    query: |-
+      AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where OperationName in ("Add service principal credentials", "Consent to application",
+                                "Add app role assignment to service principal", "Add delegated permission grant")
+           or OperationName has "Certificates and secrets management"
+      | where tostring(TargetResources) has "<vendor app name>"
+      | project TimeGenerated, OperationName, Result, InitiatedBy, TargetResources
+      // Anything the vendor's own identities changed in our directory (GDAP technicians, guests, the app)
+      AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where tostring(InitiatedBy) has "<vendor upn domain>" or tostring(InitiatedBy) has "<vendor app id>"
+      | summarize Count=count(), Examples=make_set(tostring(TargetResources), 10) by OperationName, Category
+      // Which key the app actually signs in with: KeyId on OUR service principal only if
+      // AppOwnerTenantId is our tenant; otherwise it is the vendor's app-object key (send them the id)
+      AADServicePrincipalSignInLogs
+      | where TimeGenerated > ago(30d) and AppId == "<vendor app id>"
+      | summarize FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated), IPs=make_set(IPAddress)
+          by AppOwnerTenantId, ServicePrincipalCredentialKeyId, ServicePrincipalCredentialThumbprint
+    tested: null
+    attack:
+      - "T1098.001"
+      - "T1528"
+  - id: "supply-chain-response/defender/s4-where-the-package-the-vendor-binary-or-the-sidel"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "Where the package, the vendor binary or the sideloaded payload exists, ran or was loaded"
+    why: "Every host with the bad version is in scope, including CI runners and developer laptops no asset register lists. A trojanised installer often carries the payload as a sideloaded library (3CX, 2023: ffmpeg.dll loaded by the signed desktop app), so the installer hash alone misses the hosts that matter."
+    how: null
+    fp: "DeviceFileEvents samples writes: an empty result is not absence. Containers on Linux runners are only seen when Defender runs on the host and the workspace is on the host filesystem; otherwise the CI job logs and the registry proxy are the source for stage 4."
+    query: |-
+      // The trojanised binary by hash: written, executed, or loaded as a module
+      union DeviceFileEvents, DeviceProcessEvents, DeviceImageLoadEvents
+      | where Timestamp > ago(30d)
+      | where SHA256 in ("<sha256 of installer>", "<sha256 of payload dll>")
+      | summarize FirstSeen=min(Timestamp), LastSeen=max(Timestamp), Types=make_set(ActionType) by DeviceName, FolderPath, FileName
+      // The sideloaded payload by name and parent, hash-agnostic (catches variants the advisory missed)
+      DeviceImageLoadEvents
+      | where Timestamp > ago(30d)
+      | where FileName =~ "<sideloaded dll>" and InitiatingProcessFileName =~ "<vendor exe>"
+      | summarize Hosts=dcount(DeviceName), Hashes=make_set(SHA256) by FolderPath
+      // The npm package on disk: laptops and runner workspaces (PyPI: FolderPath has "site-packages")
+      DeviceFileEvents
+      | where Timestamp > ago(30d)
+      | where FolderPath has "node_modules" and FolderPath has "<package>" and FileName =~ "package.json"
+      | summarize FirstSeen=min(Timestamp) by DeviceName, FolderPath, InitiatingProcessFileName
+      // Vendor desktop and server software by version. DeviceTvmSoftwareInventory indexes installed
+      // programs only: it does not see npm, pip, container or base-image contents.
+      DeviceTvmSoftwareInventory
+      | where SoftwareVendor has "<vendor>" | project DeviceName, SoftwareName, SoftwareVersion
+    tested: null
+    attack:
+      - "T1195.002"
+      - "T1195.001"
+      - "T1574.001"
+  - id: "supply-chain-response/defender/s4-everything-signed-with-the-vendor-s-stolen-certi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "Everything signed with the vendor's stolen certificate"
+    why: "A stolen signing key makes a hash block insufficient: the attacker can sign a new payload. Hunt by signer and serial number across executions and module loads, then block the certificate, not just the files."
+    how: null
+    fp: "Every legitimate binary from the vendor matches the signer name. The discriminators are the serial of the leaked certificate (the vendor names it), a CertificateCountersignatureTime inside the compromise window, and files the vendor's release manifest does not list."
+    query: |-
+      // Signer, serial and countersignature (timestamp) time come from DeviceFileCertificateInfo, joined on SHA1
+      DeviceFileCertificateInfo
+      | where Timestamp > ago(30d)
+      | where Signer has "<vendor signer name>" or CertificateSerialNumber =~ "<serial from the advisory>"
+      | join kind=inner (
+          union DeviceProcessEvents, DeviceImageLoadEvents
+          | where Timestamp > ago(30d)
+          | project DeviceName, SHA1, FileName, FolderPath, Timestamp) on SHA1
+      | summarize Hosts=dcount(DeviceName), FirstSeen=min(Timestamp1), Files=make_set(FileName, 20)
+          by Signer, CertificateSerialNumber, CertificateCountersignatureTime, IsTrusted
+      // IsTrusted stays true until the CA revokes and the device fetches the CRL. A countersignature
+      // dated before the revocation keeps the signature valid even then: trust the serial and the
+      // countersignature time inside the compromise window, not the trust flag.
+    tested: null
+    attack:
+      - "T1553.002"
+      - "T1588.003"
+  - id: "supply-chain-response/defender/s5-vendor-accounts-apps-and-msp-technicians-signing"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "Vendor accounts, apps and MSP technicians signing in from outside the vendor's ranges"
+    why: "A vendor identity used from an address the vendor does not own is the attacker using the stolen access, and moves the incident from theirs to ours. GDAP sessions come from the MSP's technicians' own egress, so ask the MSP for that list before reading the result."
+    how: null
+    fp: "Vendors run from cloud egress that changes without notice, and technicians work from home. Treat a new ASN with a known credential key id as a question for the vendor; a new key id, a new user agent and a new ASN together as the attacker."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d)
+      | where HomeTenantId == "<vendor tenant id>"
+      | where not(ipv4_is_in_any_range(IPAddress, "<vendor cidr>"))
+      | summarize SignIns=count(), Apps=make_set(AppDisplayName), FirstSeen=min(TimeGenerated)
+          by UserPrincipalName, CrossTenantAccessType, IPAddress, ResultType
+      AADServicePrincipalSignInLogs
+      | where TimeGenerated > ago(30d) and AppId == "<vendor app id>"
+      | where not(ipv4_is_in_any_range(IPAddress, "<vendor cidr>"))
+      | summarize SignIns=count(), FirstSeen=min(TimeGenerated)
+          by ServicePrincipalName, IPAddress, ResourceDisplayName, ServicePrincipalCredentialKeyId
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1199"
+  - id: "supply-chain-response/defender/s5-connections-and-logons-into-our-hosts-from-the-v"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "Connections and logons into our hosts from the vendor's ranges"
+    why: "These are the hosts the vendor (or whoever holds its access) actually reaches; they are where to look for spread and what to cut off first."
+    how: null
+    fp: null
+    query: |-
+      DeviceNetworkEvents
+      | where Timestamp > ago(30d)
+      | where ipv4_is_in_any_range(RemoteIP, "<vendor cidr>")
+      | summarize Connections=count(), LastSeen=max(Timestamp) by DeviceName, LocalPort, ActionType, InitiatingProcessFileName
+      DeviceLogonEvents
+      | where Timestamp > ago(30d) and ipv4_is_in_any_range(RemoteIP, "<vendor cidr>")
+      | summarize Logons=count() by DeviceName, AccountName, LogonType, ActionType
+    tested: null
+    attack:
+      - "T1133"
+      - "T1021.001"
+  - id: "supply-chain-response/defender/s5-stolen-ci-credentials-used-in-the-cloud-oidc-rol"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "Stolen CI credentials used in the cloud: OIDC role assumption from an unexpected subject"
+    why: "A package that ran on a runner had the runner's OIDC token and any long-lived keys in its environment. In CloudTrail, UserIdentityUserName on AssumeRoleWithWebIdentity is the token's sub claim (GitHub: repo:org/repo:ref:refs/heads/main ); a subject or source address you cannot map to a workflow is the stolen token in use. CloudTrail event history keeps 90 d; a trail to S3 keeps what you configured."
+    how: null
+    fp: "A subject you do not recognise is usually a renamed repository or a new workflow. A pull_request subject assuming a deploy role, or GitHub-hosted runner traffic from outside GitHub's published actions ranges ( api.github.com/meta ), is not."
+    query: |-
+      AWSCloudTrail
+      | where TimeGenerated > ago(30d)
+      | where EventName == "AssumeRoleWithWebIdentity"
+      | extend RoleArn = tostring(parse_json(RequestParameters).roleArn)
+      | where UserIdentityUserName !startswith "repo:<org>/"
+           or UserIdentityUserName has "pull_request"
+           or not(ipv4_is_in_any_range(SourceIpAddress, dynamic(["<runner egress cidr>"])))
+      | summarize Count=count(), FirstSeen=min(TimeGenerated), IPs=make_set(SourceIpAddress, 20) by UserIdentityUserName, RoleArn
+      // Long-lived keys that lived on runners or laptops: everything they did from a new address
+      AWSCloudTrail
+      | where TimeGenerated > ago(30d) and UserIdentityAccessKeyId in ("<leaked access key ids>")
+      | summarize Calls=count(), Events=make_set(EventName, 30) by UserIdentityAccessKeyId, SourceIpAddress, UserAgent
+    tested: null
+    attack:
+      - "T1550.001"
+      - "T1078.004"
+  - id: "supply-chain-response/defender/s6-shells-and-commands-launched-by-the-msp-s-remote"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "Shells and commands launched by the MSP's remote-management agent"
+    why: "An MSP's RMM agent is command-and-control as SYSTEM on every managed host; in the Kaseya VSA incident (2021) the attacker pushed a 'hot-fix' procedure through the agent to deploy ransomware. Commands the agent launched during the window show whether the attacker used it inside our network."
+    how: null
+    fp: "Every legitimate RMM task (patching, inventory, scripted fixes) spawns cmd and powershell as SYSTEM. Baseline the week before the window and diff. Encoded commands, certutil decoding, Defender tampering and shells on hosts with no open ticket are the signal."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp > ago(30d)
+      // Kaseya AgentMon.exe, ScreenConnect.ClientService.exe, AteraAgent.exe, NinjaRMMAgent.exe, CagService.exe (Datto), BASupSrvc.exe (N-able)
+      | where InitiatingProcessFileName in~ ("<rmm agent exe>")
+      | where FileName in~ ("cmd.exe", "powershell.exe", "pwsh.exe", "rundll32.exe", "certutil.exe", "msiexec.exe", "sh", "bash")
+      | extend Suspicious = ProcessCommandLine has_any ("-EncodedCommand", "-enc ", "certutil", "-decode", "DisableRealtimeMonitoring", "Set-MpPreference", "vssadmin", "bcdedit")
+      | summarize Hosts=dcount(DeviceName), Examples=make_set(ProcessCommandLine, 25), FirstSeen=min(Timestamp)
+          by InitiatingProcessFileName, FileName, AccountName, Suspicious
+    tested: null
+    attack:
+      - "T1219"
+      - "T1059.003"
+      - "T1059.001"
+  - id: "supply-chain-response/defender/s6-install-time-execution-lifecycle-scripts-in-proc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "Install-time execution: lifecycle scripts, in-process credential theft and the 2025 worm pattern"
+    why: "npm, pnpm and yarn run lifecycle scripts through a shell: cmd.exe /d /s /c \"<script>\" on Windows, sh -c on Linux and macOS, with node as the parent. In-process payloads never spawn curl: Shai-Hulud (September and November 2025) ran inside node, fetched trufflehog, read ~/.npmrc and cloud credential files, talked to api.github.com, created repositories and workflows and published with the stolen npm token. Nx s1ngularity (August 2025) used installed claude, gemini and q CLIs as the secret finder. Hunt node's children, its files and its connections, not a download tool."
+    how: null
+    fp: "Query 1 fires on node-gyp builds, husky, esbuild and every other legitimate install script; it is a scoping query, read the command lines. Query 2: developers run gh and AI CLIs from editors that are node processes (VS Code extensions); the parent command line distinguishes an editor from an npm install. Query 3: node talking to api.github.com is normal on a laptop with gh or Dependabot tooling, abnormal on a CI runner during an install step."
+    query: |-
+      // 1. Lifecycle scripts in the window: every package with an install script matches, so filter to the package
+      DeviceProcessEvents
+      | where Timestamp > ago(30d)
+      | where InitiatingProcessFileName in~ ("node.exe", "node")
+      | where (FileName =~ "cmd.exe" and ProcessCommandLine has "/d /s /c")
+           or (FileName in~ ("sh", "bash", "dash") and ProcessCommandLine has "-c")
+      | where ProcessCommandLine has_any ("<package>", "preinstall", "postinstall")
+      | summarize Examples=make_set(ProcessCommandLine, 25), FirstSeen=min(Timestamp) by DeviceName, AccountName
+      // 2. Node or bun spawning the tools the 2025 worms used
+      DeviceProcessEvents
+      | where Timestamp > ago(30d)
+      | where InitiatingProcessFileName in~ ("node.exe", "node", "bun", "bun.exe")
+      | where FileName in~ ("trufflehog", "trufflehog.exe", "gh", "gh.exe", "claude", "gemini", "q", "q.exe")
+           or ProcessCommandLine has_any ("--dangerously-skip-permissions", "--yolo", "--trust-all-tools", "npm publish", "gh repo create", "gh auth", "/tmp/inventory.txt")
+      | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessCommandLine
+      // 3. Node, bun or trufflehog talking to GitHub, a webhook sink, the registry or the metadata service
+      DeviceNetworkEvents
+      | where Timestamp > ago(30d)
+      | where InitiatingProcessFileName in~ ("node.exe", "node", "bun", "bun.exe", "trufflehog", "trufflehog.exe")
+      | where RemoteUrl has_any ("api.github.com", "webhook.site", "registry.npmjs.org") or RemoteIP in ("169.254.169.254")
+      | summarize Count=count(), FirstSeen=min(Timestamp) by DeviceName, InitiatingProcessFileName, RemoteUrl, RemoteIP
+      // 4. Files the worms wrote (Shai-Hulud: bundle.js, setup_bun.js, bun_environment.js, the *.json dumps, migrate-repos.sh)
+      DeviceFileEvents
+      | where Timestamp > ago(30d)
+      | where FileName in~ ("setup_bun.js", "bun_environment.js", "cloud.json", "contents.json", "environment.json", "truffleSecrets.json", "actionsSecrets.json", "migrate-repos.sh", "shai-hulud-workflow.yml")
+           or (FileName =~ "bundle.js" and FolderPath has "node_modules" and FileSize > 2000000)
+      | summarize Hosts=dcount(DeviceName), Paths=make_set(FolderPath, 20) by FileName
+    tested: null
+    attack:
+      - "T1195.001"
+      - "T1059.007"
+      - "T1552.001"
+      - "T1567.001"
+  - id: "supply-chain-response/crowdstrike/s2-every-external-tenant-with-a-path-into-ours-gues"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Our connection"
+    stage_ord: 2
+    platform: "CrowdStrike Falcon"
+    title: "Every external tenant with a path into ours: guests, direct connect, GDAP and DAP"
+    why: "The vendor register is usually incomplete. Sign-ins carry the home tenant and the path: serviceProvider is an MSP acting through Partner Center (GDAP or DAP), b2bCollaboration a guest. Each path has a different cut."
+    how: null
+    fp: "Your own MSP, Microsoft support and every Teams shared-channel partner appear here legitimately; the first query is the inventory, and any serviceProvider tenant you cannot name is its own finding."
+    query: |-
+      #Vendor=microsoft @sourcetype="microsoft-entra-id"
+      | Vendor.properties.crossTenantAccessType!="none"
+      | groupBy([Vendor.properties.homeTenantId, Vendor.properties.crossTenantAccessType],
+                function=[max(@timestamp, as=LastSeen), count(as=SignIns), count(Vendor.properties.userPrincipalName, distinct=true, as=Users)])
+      // The named vendor: accounts, apps and the path used
+      #Vendor=microsoft @sourcetype="microsoft-entra-id"
+      | Vendor.properties.homeTenantId="<vendor tenant id>" or Vendor.properties.appId="<vendor app id>"
+      | groupBy([Vendor.category, Vendor.properties.userPrincipalName, Vendor.properties.crossTenantAccessType, Vendor.properties.appDisplayName],
+                function=[max(@timestamp, as=LastSeen), count(as=SignIns)])
+      // Vendor.properties.* mirrors Entra's JSON keys. Confirm homeTenantId, crossTenantAccessType and
+      // appOwnerTenantId exist in one parsed event before trusting an empty result.
+    tested: null
+    attack:
+      - "T1199"
+      - "T1078.004"
+  - id: "supply-chain-response/crowdstrike/s3-which-vendor-app-credential-is-in-use-was-one-ad"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Credentials"
+    stage_ord: 3
+    platform: "CrowdStrike Falcon"
+    title: "Which vendor-app credential is in use, was one added, and whose tenant holds it"
+    why: "Rotating the wrong secret leaves the attacker in; a credential, consent or role added during the window is the attacker's own foothold and is removed, not rotated. If the app's owner tenant is the vendor's, the secret is on their app object: only they can rotate it, and the key id from the sign-in is what you send them."
+    how: null
+    fp: "A vendor's scheduled credential rollover fires 'Add service principal credentials' legitimately; the tell is a second credential added without the old one removed, or a user (not admin) consent."
+    query: |-
+      #Vendor=microsoft @sourcetype="microsoft-entra-id" Vendor.category=AuditLogs
+      | Vendor.operationName=/Add service principal credentials|Certificates and secrets management|Consent to application|Add app role assignment to service principal|Add delegated permission grant/i
+      | table([@timestamp, Vendor.operationName, Vendor.properties.initiatedBy.user.userPrincipalName, Vendor.properties.targetResources[0].displayName])
+      // Filter the table on <vendor app name>. Then the key in use:
+      #Vendor=microsoft @sourcetype="microsoft-entra-id" Vendor.category=ServicePrincipalSignInLogs
+      | Vendor.properties.appId="<vendor app id>"
+      | groupBy([Vendor.properties.appOwnerTenantId, Vendor.properties.servicePrincipalCredentialKeyId, Vendor.properties.servicePrincipalCredentialThumbprint],
+                function=[min(@timestamp, as=FirstSeen), max(@timestamp, as=LastSeen), count(as=SignIns)])
+    tested: null
+    attack:
+      - "T1098.001"
+      - "T1528"
+  - id: "supply-chain-response/crowdstrike/s4-where-the-package-the-vendor-binary-or-the-sidel"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "CrowdStrike Falcon"
+    title: "Where the package, the vendor binary or the sideloaded payload exists, ran or was loaded"
+    why: "Every host with the bad version is in scope, including CI runners and developer laptops no asset register lists. A trojanised installer often carries the payload as a sideloaded library (3CX, 2023: ffmpeg.dll loaded by the signed desktop app), so the installer hash alone misses the hosts that matter."
+    how: null
+    fp: "Falcon records module loads it classifies, not every DLL; an empty ClassifiedModuleLoad result is not absence. The RTR disk check is the authority for 'installed'."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | SHA256HashData=~in(values=["<sha256 of installer>", "<sha256 of payload dll>"]) or CommandLine=/<package>/i
+      | groupBy([ComputerName, ImageFileName, SHA256HashData], function=[min(@timestamp, as=FirstSeen), count(as=Runs)])
+      // The sideloaded payload as a module load (confirm ClassifiedModuleLoad is populated in your tenant)
+      #event_simpleName=ClassifiedModuleLoad
+      | ImageFileName=/\\<sideloaded dll>$/i or SHA256HashData="<sha256 of payload dll>"
+      | groupBy([ComputerName, ImageFileName, SHA256HashData, TargetProcessId], function=count())
+      // Execution and loads only. A package that is installed but never ran needs a disk check, RTR on the runner or laptop:
+      //   runscript -Raw=```Get-ChildItem C:\Users, C:\actions-runner, C:\agent -Recurse -Filter package.json -ErrorAction SilentlyContinue | ? FullName -like '*\node_modules\<package>\package.json' | % { $_.FullName; (Get-Content $_.FullName | ConvertFrom-Json).version }```
+      //   runscript -Raw=```find /home /root /opt /srv /builds -path '*/node_modules/<package>/package.json' -exec grep -H '"version"' {} +```
+    tested: null
+    attack:
+      - "T1195.002"
+      - "T1195.001"
+      - "T1574.001"
+  - id: "supply-chain-response/crowdstrike/s4-everything-signed-with-the-vendor-s-stolen-certi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "CrowdStrike Falcon"
+    title: "Everything signed with the vendor's stolen certificate"
+    why: "A stolen signing key makes a hash block insufficient: the attacker can sign a new payload. Falcon events do not expose the signer name for ad-hoc hunting; enumerate by certificate thumbprint on disk with RTR on the hosts the stage 4 hunt returned, then block every hash it finds."
+    how: null
+    fp: "Every legitimate binary from the vendor matches the signer name; the discriminators are the serial of the leaked certificate, a timestamp inside the compromise window, and files the vendor's release manifest does not list."
+    query: |-
+      runscript -Raw=```Get-ChildItem 'C:\Program Files', 'C:\Program Files (x86)', 'C:\ProgramData', 'C:\Users' -Recurse -Include *.exe,*.dll,*.msi -ErrorAction SilentlyContinue |
+        Get-AuthenticodeSignature | Where-Object { $_.SignerCertificate.Thumbprint -eq '<thumbprint>' -or $_.SignerCertificate.SerialNumber -eq '<serial>' } |
+        Select-Object Path, Status, @{n='Countersigned';e={$_.TimeStamperCertificate.NotBefore}}, @{n='SHA256';e={(Get-FileHash $_.Path).Hash}}```
+      // Status stays Valid until the CA revokes and the host fetches the CRL; a countersignature dated before the
+      // revocation keeps it Valid even then. The serial and a signing time inside the window are the evidence.
+    tested: null
+    attack:
+      - "T1553.002"
+      - "T1588.003"
+  - id: "supply-chain-response/crowdstrike/s5-vendor-accounts-apps-and-msp-technicians-signing"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "CrowdStrike Falcon"
+    title: "Vendor accounts, apps and MSP technicians signing in from outside the vendor's ranges"
+    why: "A vendor identity used from an address the vendor does not own is the attacker using the stolen access, and moves the incident from theirs to ours. GDAP sessions come from the MSP's technicians' own egress: ask the MSP for that list first."
+    how: null
+    fp: "Vendors run from cloud egress that changes without notice and technicians work from home. A new ASN with a known credential key id is a question for the vendor; a new key id, user agent and ASN together is the attacker."
+    query: |-
+      #Vendor=microsoft @sourcetype="microsoft-entra-id"
+      | Vendor.properties.homeTenantId="<vendor tenant id>" or Vendor.properties.appId="<vendor app id>"
+      | !cidr(source.ip, subnet=["<vendor cidr>"])
+      | groupBy([user.email, Vendor.properties.crossTenantAccessType, Vendor.properties.appDisplayName, source.ip, #event.outcome],
+                function=[min(@timestamp, as=FirstSeen), count(as=SignIns)])
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1199"
+  - id: "supply-chain-response/crowdstrike/s5-connections-and-logons-into-our-hosts-from-the-v"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "CrowdStrike Falcon"
+    title: "Connections and logons into our hosts from the vendor's ranges"
+    why: "These are the hosts the vendor (or whoever holds its access) actually reaches; they are where to look for spread and what to cut off first."
+    how: null
+    fp: null
+    query: |-
+      #event_simpleName=NetworkReceiveAcceptIP4
+      | cidr(RemoteAddressIP4, subnet=["<vendor cidr>"])
+      | groupBy([aid, ComputerName, LocalPort, RemoteAddressIP4], function=count(as=Connections))
+      #event_simpleName=UserLogon
+      | cidr(RemoteAddressIP4, subnet=["<vendor cidr>"])
+      | groupBy([ComputerName, UserName, LogonType])
+    tested: null
+    attack:
+      - "T1133"
+      - "T1021.001"
+  - id: "supply-chain-response/crowdstrike/s5-stolen-ci-credentials-used-in-the-cloud-oidc-rol"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "CrowdStrike Falcon"
+    title: "Stolen CI credentials used in the cloud: OIDC role assumption from an unexpected subject"
+    why: "A package that ran on a runner had the runner's OIDC token and any long-lived keys in its environment. On AssumeRoleWithWebIdentity the user name is the token's sub claim (GitHub: repo:org/repo:ref:refs/heads/main ); a subject or source address you cannot map to a workflow is the stolen token in use. CloudTrail event history keeps 90 d."
+    how: null
+    fp: "A subject you do not recognise is usually a renamed repository or a new workflow. A pull_request subject assuming a deploy role, or GitHub-hosted runner traffic from outside GitHub's published actions ranges (api.github.com/meta), is not."
+    query: |-
+      // AWS CloudTrail connector, ECS-normalised. Confirm the field names in one parsed AssumeRoleWithWebIdentity event first.
+      #Vendor=aws event.action="AssumeRoleWithWebIdentity"
+      | user.name!=/^repo:<org>\// or user.name=/pull_request/ or !cidr(source.ip, subnet=["<runner egress cidr>"])
+      | groupBy([user.name, source.ip], function=[min(@timestamp, as=FirstSeen), count()])
+    tested: null
+    attack:
+      - "T1550.001"
+      - "T1078.004"
+  - id: "supply-chain-response/crowdstrike/s6-shells-and-commands-launched-by-the-msp-s-remote"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "CrowdStrike Falcon"
+    title: "Shells and commands launched by the MSP's remote-management agent"
+    why: "An MSP's RMM agent is command-and-control as SYSTEM on every managed host (Kaseya VSA, 2021: a pushed 'hot-fix' procedure deployed ransomware through AgentMon.exe). Commands it launched during the window show whether the attacker used it inside our network."
+    how: null
+    fp: "Every legitimate RMM task spawns cmd and powershell as SYSTEM. Baseline the week before the window and diff; encoded commands, certutil decoding, Defender tampering and shells on hosts with no open ticket are the signal."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      // AgentMon.exe (Kaseya), ScreenConnect.ClientService.exe, AteraAgent.exe, NinjaRMMAgent.exe, CagService.exe (Datto), BASupSrvc.exe (N-able)
+      | ParentBaseFileName=/^<rmm agent exe>$/i
+      | ImageFileName=/[\\\/](cmd|powershell|pwsh|rundll32|certutil|msiexec)\.exe$|\/(ba)?sh$/i
+      | Suspicious := if(CommandLine=/-enc|-EncodedCommand|certutil|-decode|DisableRealtimeMonitoring|vssadmin|bcdedit/i, then="yes", else="no")
+      | groupBy([ParentBaseFileName, ImageFileName, UserName, Suspicious, CommandLine], function=count(ComputerName, distinct=true, as=Hosts))
+    tested: null
+    attack:
+      - "T1219"
+      - "T1059.003"
+      - "T1059.001"
+  - id: "supply-chain-response/crowdstrike/s6-install-time-execution-lifecycle-scripts-in-proc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "CrowdStrike Falcon"
+    title: "Install-time execution: lifecycle scripts, in-process credential theft and the 2025 worm pattern"
+    why: "npm runs lifecycle scripts through cmd.exe /d /s /c on Windows and sh -c elsewhere, with node as the parent. In-process payloads never spawn curl: Shai-Hulud (2025) ran inside node, fetched trufflehog, read ~/.npmrc and cloud credential files, talked to api.github.com and published with the stolen token; Nx s1ngularity used installed claude, gemini and q CLIs as the secret finder. Hunt node's children and its DNS, not a download tool."
+    how: null
+    fp: "Query 1 fires on node-gyp builds, husky and every legitimate install script: read the command lines. Query 2: editors are node processes and developers run gh and AI CLIs from them; the parent command line separates an editor from an npm install. Query 3: node resolving api.github.com is normal on a laptop, abnormal on a CI runner during an install step."
+    query: |-
+      // 1. Lifecycle scripts in the window, scoped to the package
+      #event_simpleName=ProcessRollup2
+      | ParentBaseFileName=/^node(\.exe)?$/i
+      | (ImageFileName=/\\cmd\.exe$/i and CommandLine=/\/d \/s \/c/) or (ImageFileName=/\/(ba|da)?sh$/ and CommandLine=/ -c /)
+      | CommandLine=/<package>|preinstall|postinstall/i
+      | groupBy([ComputerName, UserName, CommandLine], function=min(@timestamp, as=FirstSeen))
+      // 2. Node or bun spawning the tools the worms used
+      #event_simpleName=ProcessRollup2
+      | ParentBaseFileName=/^(node|bun)(\.exe)?$/i
+      | ImageFileName=/[\\\/](trufflehog|gh|claude|gemini|q)(\.exe)?$/i or CommandLine=/--dangerously-skip-permissions|--yolo|--trust-all-tools|npm publish|gh repo create|gh auth|\/tmp\/inventory\.txt/i
+      | table([@timestamp, ComputerName, UserName, ImageFileName, CommandLine, ParentCommandLine])
+      // 3. Node, bun or trufflehog resolving GitHub, a webhook sink or the registry (confirm DnsRequest field names in one event)
+      #event_simpleName=DnsRequest
+      | ContextBaseFileName=/^(node|bun|trufflehog)(\.exe)?$/i
+      | DomainName=/api\.github\.com|webhook\.site|registry\.npmjs\.org/i
+      | groupBy([ComputerName, ContextBaseFileName, DomainName], function=[min(@timestamp, as=FirstSeen), count()])
+    tested: null
+    attack:
+      - "T1195.001"
+      - "T1059.007"
+      - "T1552.001"
+      - "T1567.001"
+  - id: "supply-chain-response/sentinelone/s2-which-of-our-hosts-the-vendor-reaches-and-whethe"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Our connection"
+    stage_ord: 2
+    platform: "SentinelOne"
+    title: "Which of our hosts the vendor reaches, and whether Entra data is in the lake"
+    why: "The endpoint half of the vendor's connection is the hosts that accept its logons and run its software; the identity half (guests, GDAP, apps) is only visible if the Entra logs are ingested, and then only after you have confirmed the parser's field names."
+    how: null
+    fp: "Service desks and jump hosts take vendor logons by design; the hosts to worry about are the ones with no change ticket for the window."
+    query: |-
+      // Identity half: only if Entra logs are ingested. Discover the parser's fields, then filter on the vendor tenant id:
+      dataSource.name = '<entra source>' | limit 5
+      // Endpoint half: hosts that accept logons from the vendor's addresses
+      event.category = 'logins' AND net_ipsubnet(src.endpoint.ip.address, '<vendor cidr>')
+      | group Logons = count() by endpoint.name, event.login.userName, event.login.type
+    tested: null
+    attack:
+      - "T1199"
+      - "T1133"
+  - id: "supply-chain-response/sentinelone/s3-copies-of-the-vendor-s-key-or-token-on-our-hosts"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Credentials"
+    stage_ord: 3
+    platform: "SentinelOne"
+    title: "Copies of the vendor's key or token on our hosts"
+    why: "Rotating the vendor's credential in Entra does nothing for the copies of its API key in agent configs, CI secret files and shell history on our hosts; every copy is a credential the attacker may already hold. The Entra side (which key, was one added, whose tenant holds it) is on the Defender tab."
+    how: null
+    fp: "Keys legitimately appear in the command lines of the vendor's own agent and of CI jobs that pass them as arguments; the finding is which hosts hold them, not that they appear."
+    query: |-
+      event.type = 'Process Creation' AND tgt.process.cmdline contains '<key prefix>'
+      | columns event.time, endpoint.name, src.process.user, tgt.process.cmdline
+      // Files that embed the key: RemoteOps Fetch Files on the hosts above, or a Remote Shell grep:
+      //   grep -rl '<key prefix>' /etc /opt /home /srv 2>/dev/null
+    tested: null
+    attack:
+      - "T1552.001"
+      - "T1528"
+  - id: "supply-chain-response/sentinelone/s4-where-the-package-the-vendor-binary-or-the-sidel"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "SentinelOne"
+    title: "Where the package, the vendor binary or the sideloaded payload exists, ran or was loaded"
+    why: "Every host with the bad version is in scope, including CI runners and developer laptops no asset register lists. A trojanised installer often carries the payload as a sideloaded library (3CX, 2023: ffmpeg.dll loaded by the signed desktop app), so the installer hash alone misses the hosts that matter."
+    how: null
+    fp: "File Creation is the install event, so a package installed before the agent's retention window is invisible here; RemoteOps Fetch Files on node_modules/<package>/package.json is the authority for 'installed'."
+    query: |-
+      // By hash across every event type (#sha256 expands to every SHA256 field; explicit: tgt.file.sha256, module.sha256)
+      #sha256 in ('<sha256 of installer>', '<sha256 of payload dll>')
+      | group Events = count(), Hosts = estimate_distinct(endpoint.name) by event.type, tgt.file.path, module.path
+      // The sideloaded payload by name and parent, hash-agnostic
+      event.type = 'Module Load' AND module.path contains '<sideloaded dll>' AND src.process.name = '<vendor exe>'
+      | group Hosts = estimate_distinct(endpoint.name), Hashes = estimate_distinct(module.sha256) by module.path
+      // The npm package on disk (PyPI: site-packages)
+      event.type = 'File Creation' AND tgt.file.path contains 'node_modules' AND tgt.file.path contains '<package>'
+      | group Files = count() by endpoint.name, src.process.name
+      // Installed vendor applications by version: Application Inventory in the console (installed programs only;
+      // it does not see npm, pip or container contents)
+    tested: null
+    attack:
+      - "T1195.002"
+      - "T1195.001"
+      - "T1574.001"
+  - id: "supply-chain-response/sentinelone/s4-everything-signed-with-the-vendor-s-stolen-certi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "SentinelOne"
+    title: "Everything signed with the vendor's stolen certificate"
+    why: "A stolen signing key makes a hash block insufficient: the attacker can sign a new payload. Hunt by publisher across process starts and module loads, then block every hash the hunt returns."
+    how: null
+    fp: "Every legitimate binary from the vendor matches the publisher; the discriminators are the serial of the leaked certificate, a signing time inside the compromise window, and files the vendor's release manifest does not list."
+    query: |-
+      src.process.publisher contains '<vendor signer name>' OR tgt.process.publisher contains '<vendor signer name>'
+      | group Hosts = estimate_distinct(endpoint.name), Hashes = estimate_distinct(tgt.process.image.sha256)
+          by tgt.process.publisher, tgt.process.name, tgt.process.signedStatus
+      // Serial number and countersignature time are not in the event: check them on the sample with
+      //   Get-AuthenticodeSignature <file> | Select SignerCertificate, TimeStamperCertificate
+      // A countersignature dated before the revocation keeps the signature valid; the serial is the evidence.
+    tested: null
+    attack:
+      - "T1553.002"
+      - "T1588.003"
+  - id: "supply-chain-response/sentinelone/s5-vendor-accounts-signing-in-to-our-hosts-from-out"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "SentinelOne"
+    title: "Vendor accounts signing in to our hosts from outside the vendor's ranges"
+    why: "A vendor account used from an address the vendor does not own is the attacker using the stolen access. Entra sign-ins are on the Defender tab; this is the host-level view."
+    how: null
+    fp: "VPN pools and jump hosts put the vendor behind your own addresses; exclude them and read the first hop from the VPN log instead."
+    query: |-
+      event.category = 'logins' AND event.login.userName contains '<vendor account prefix>'
+        AND NOT net_ipsubnet(src.endpoint.ip.address, '<vendor cidr>')
+      | group Logons = count() by endpoint.name, event.login.userName, src.endpoint.ip.address
+    tested: null
+    attack:
+      - "T1078"
+      - "T1199"
+  - id: "supply-chain-response/sentinelone/s5-connections-into-our-hosts-from-the-vendor-s-ran"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "SentinelOne"
+    title: "Connections into our hosts from the vendor's ranges"
+    why: "These are the hosts the vendor (or whoever holds its access) actually reaches; they are where to look for spread and what to cut off first."
+    how: null
+    fp: null
+    query: |-
+      event.type = 'IP Connect' AND event.network.direction = 'INCOMING'
+        AND (net_ipsubnet(src.ip.address, '<vendor cidr>') OR net_ipsubnet(dst.ip.address, '<vendor cidr>'))
+      | group Connections = count() by endpoint.name, src.process.name, dst.port.number
+    tested: null
+    attack:
+      - "T1133"
+      - "T1021.001"
+  - id: "supply-chain-response/sentinelone/s6-shells-and-commands-launched-by-the-msp-s-remote"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "SentinelOne"
+    title: "Shells and commands launched by the MSP's remote-management agent"
+    why: "An MSP's RMM agent is command-and-control as SYSTEM on every managed host (Kaseya VSA, 2021: a pushed 'hot-fix' procedure deployed ransomware through AgentMon.exe). Commands it launched during the window show whether the attacker used it inside our network."
+    how: null
+    fp: "Every legitimate RMM task spawns cmd and powershell as SYSTEM. Baseline the week before the window and diff; encoded commands, certutil decoding, Defender tampering and shells on hosts with no open ticket are the signal."
+    query: |-
+      // AgentMon.exe (Kaseya), ScreenConnect.ClientService.exe, AteraAgent.exe, NinjaRMMAgent.exe, CagService.exe (Datto), BASupSrvc.exe (N-able)
+      event.type = 'Process Creation' AND src.process.name in:anycase ('<rmm agent exe>')
+        AND tgt.process.name in:anycase ('cmd.exe', 'powershell.exe', 'pwsh.exe', 'rundll32.exe', 'certutil.exe', 'msiexec.exe', 'sh', 'bash')
+      | group Hosts = estimate_distinct(endpoint.name), First = min(event.time) by src.process.name, tgt.process.cmdline
+      // Narrow to the suspicious set:
+      //   AND tgt.process.cmdline contains ('-enc', '-EncodedCommand', 'certutil', '-decode', 'DisableRealtimeMonitoring', 'vssadmin', 'bcdedit')
+    tested: null
+    attack:
+      - "T1219"
+      - "T1059.003"
+      - "T1059.001"
+  - id: "supply-chain-response/sentinelone/s6-install-time-execution-lifecycle-scripts-in-proc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "SentinelOne"
+    title: "Install-time execution: lifecycle scripts, in-process credential theft and the 2025 worm pattern"
+    why: "npm runs lifecycle scripts through cmd.exe /d /s /c on Windows and sh -c elsewhere, with node as the parent. In-process payloads never spawn curl: Shai-Hulud (2025) ran inside node, fetched trufflehog, read ~/.npmrc and cloud credential files, talked to api.github.com and published with the stolen token; Nx s1ngularity used installed claude, gemini and q CLIs as the secret finder. Hunt node's children, its files and its connections, not a download tool."
+    how: null
+    fp: "Query 1 fires on node-gyp builds, husky and every legitimate install script: read the command lines. Query 2: editors are node processes and developers run gh and AI CLIs from them; the parent command line separates an editor from an npm install. Query 3: node resolving api.github.com is normal on a laptop, abnormal on a CI runner during an install step."
+    query: |-
+      // 1. Lifecycle scripts in the window, scoped to the package
+      event.type = 'Process Creation' AND src.process.name in:anycase ('node', 'node.exe')
+        AND ((tgt.process.name in:anycase ('cmd.exe') AND tgt.process.cmdline contains '/d /s /c')
+             OR (tgt.process.name in:anycase ('sh', 'bash', 'dash') AND tgt.process.cmdline contains ' -c '))
+        AND tgt.process.cmdline contains ('<package>', 'preinstall', 'postinstall')
+      | group First = min(event.time), Cmds = count() by endpoint.name, src.process.user, tgt.process.cmdline
+      // 2. Node or bun spawning the tools the worms used
+      event.type = 'Process Creation' AND src.process.name in:anycase ('node', 'node.exe', 'bun', 'bun.exe')
+        AND (tgt.process.name in:anycase ('trufflehog', 'trufflehog.exe', 'gh', 'gh.exe', 'claude', 'gemini', 'q', 'q.exe')
+             OR tgt.process.cmdline contains ('--dangerously-skip-permissions', '--yolo', '--trust-all-tools', 'npm publish', 'gh repo create', 'gh auth', '/tmp/inventory.txt'))
+      | columns event.time, endpoint.name, src.process.user, tgt.process.name, tgt.process.cmdline, src.process.cmdline
+      // 3. Node, bun or trufflehog connecting to GitHub, a webhook sink, the registry or the metadata service
+      (event.type = 'IP Connect' OR event.type = 'DNS Resolved')
+        AND src.process.name in:anycase ('node', 'node.exe', 'bun', 'bun.exe', 'trufflehog', 'trufflehog.exe')
+        AND (dns.request contains ('api.github.com', 'webhook.site', 'registry.npmjs.org') OR dst.ip.address = '169.254.169.254')
+      | group Count = count(), First = min(event.time) by endpoint.name, src.process.name, dns.request, dst.ip.address
+      // 4. Files the worms wrote
+      event.type = 'File Creation'
+        AND (tgt.file.path contains ('setup_bun.js', 'bun_environment.js', 'truffleSecrets.json', 'actionsSecrets.json', 'migrate-repos.sh', 'shai-hulud-workflow.yml', 'cloud.json', 'environment.json')
+             OR (tgt.file.path contains 'node_modules' AND tgt.file.path contains 'bundle.js' AND tgt.file.size > 2000000))
+      | group Hosts = estimate_distinct(endpoint.name) by tgt.file.path
+    tested: null
+    attack:
+      - "T1195.001"
+      - "T1059.007"
+      - "T1552.001"
+      - "T1567.001"
+  - id: "supply-chain-response/velociraptor/s2-the-endpoint-half-of-the-vendor-s-connection-its"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Our connection"
+    stage_ord: 2
+    platform: "Velociraptor"
+    title: "The endpoint half of the vendor's connection — its software and its agents on our hosts"
+    why: "No view of Entra sign-ins. What Velociraptor can list is every host that runs the vendor's software or agent, including OS packages that no lockfile mentions (xz-utils, 2024, was a distro package, not a dependency)."
+    how: null
+    fp: null
+    query: |-
+      Hunt: Windows.Sys.Programs          (installed programs; filter the results on the vendor's publisher)
+      Hunt: Linux.Debian.Packages         (dpkg and snap packages)
+      Hunt: Linux.RHEL.Packages           (rpm packages)
+      Hunt: Generic.System.Pstree         (the vendor's agent running right now)
+        CallChainFilter = (?i)<rmm agent or vendor process>
+    tested: null
+    attack:
+      - "T1199"
+      - "T1195.002"
+  - id: "supply-chain-response/velociraptor/s3-copies-of-the-vendor-s-key-or-token-on-our-hosts"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Credentials"
+    stage_ord: 3
+    platform: "Velociraptor"
+    title: "Copies of the vendor's key or token on our hosts"
+    why: "No view of Entra credentials. Rotating the vendor's credential does nothing for the copies of its API key in agent configs, CI secret files and shell history on our hosts; every copy is a credential the attacker may already hold. The Entra side is on the Defender tab."
+    how: null
+    fp: "The vendor's own agent config legitimately holds the key; the finding is the list of hosts and files, which is the rotation list."
+    query: |-
+      Hunt: Windows.Search.FileFinder
+        SearchFilesGlob = C:\ProgramData\**\*.{json,config,ini,xml,env}
+        YaraRule        = rule k { strings: $a = "<key prefix>" condition: $a }
+      Hunt: Linux.Search.FileFinder
+        SearchFilesGlob = /{etc,opt,home/*,root}/**/*.{json,yml,yaml,env,conf,npmrc,pypirc}
+        YaraRule        = (same rule)
+      Hunt: Linux.Sys.BashHistory
+        SearchRegex     = <key prefix>
+    tested: null
+    attack:
+      - "T1552.001"
+      - "T1528"
+  - id: "supply-chain-response/velociraptor/s4-where-the-package-the-vendor-binary-or-the-sidel"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "Velociraptor"
+    title: "Where the package, the vendor binary or the sideloaded payload exists or is loaded"
+    why: "Every host with the bad version is in scope, including CI runners and developer laptops no asset register lists. A trojanised installer often carries the payload as a sideloaded library (3CX, 2023: ffmpeg.dll loaded by the signed desktop app), so the installer hash alone misses the hosts that matter."
+    how: null
+    fp: "HashHunter's filters are cumulative: a size or date filter that excludes the file hides a hash hit. Run it with the path filter only first."
+    query: |-
+      Hunt: Generic.Detection.HashHunter
+        TargetGlob = C:/**/*.{exe,dll,msi}            (narrow to the vendor's install folder)
+        SHA256List = <sha256 of installer>
+                     <sha256 of payload dll>
+      Hunt: Windows.System.DLLs                       (the sideloaded payload loaded right now, with its certificate)
+        ProcessRegex    = (?i)^<vendor exe>$
+        DllRegex        = (?i)<sideloaded dll>$
+        Calculate_Hash  = Y
+        CertificateInfo = Y
+      Hunt: Windows.Search.FileFinder
+        SearchFilesGlob = C:\{Users\*,actions-runner,agent}\**\node_modules\<package>\package.json
+        Upload_File     = Y                              (the version is inside the file)
+      Hunt: Linux.Search.FileFinder
+        SearchFilesGlob = /{home/*,root,opt,srv,builds}/**/node_modules/<package>/package.json
+        Upload_File     = Y
+        (PyPI: .../site-packages/<package>-*.dist-info/METADATA)
+    tested: null
+    attack:
+      - "T1195.002"
+      - "T1195.001"
+      - "T1574.001"
+  - id: "supply-chain-response/velociraptor/s4-everything-signed-with-the-vendor-s-stolen-certi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "Velociraptor"
+    title: "Everything signed with the vendor's stolen certificate"
+    why: "A stolen signing key makes a hash block insufficient: the attacker can sign a new payload. No built-in artifact hunts by signer, so this is VQL over authenticode(); the serial and the signing time inside the window are the evidence, the trust flag is not."
+    how: null
+    fp: "Every legitimate binary from the vendor matches the signer; the discriminators are the serial of the leaked certificate, a countersignature inside the compromise window, and files the vendor's release manifest does not list. Hashing every PE on a fleet is slow: scope the glob."
+    query: |-
+      -- Notebook or custom artifact; narrow the glob to the vendor's folders on a large fleet
+      SELECT OSPath, Sig.SubjectName AS Signer, Sig.SerialNumber AS Serial, Sig.Timestamp AS Countersigned, Sig.Trusted AS Trusted,
+             hash(path=OSPath).SHA256 AS SHA256
+      FROM foreach(row={
+             SELECT OSPath FROM glob(globs=['C:/Program Files*/**/*.{exe,dll}', 'C:/ProgramData/**/*.{exe,dll}', 'C:/Users/*/AppData/**/*.{exe,dll}'])
+           }, query={ SELECT OSPath, authenticode(filename=OSPath) AS Sig FROM scope() })
+      WHERE Signer =~ "<vendor signer name>" OR Serial =~ "<serial from the advisory>"
+      -- Trusted stays true until the CA revokes and the host fetches the CRL; a countersignature dated
+      -- before the revocation keeps it true even then.
+    tested: null
+    attack:
+      - "T1553.002"
+      - "T1588.003"
+  - id: "supply-chain-response/velociraptor/s5-logons-by-the-vendor-s-accounts-and-from-the-ven"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Velociraptor"
+    title: "Logons by the vendor's accounts, and from the vendor's ranges, on our hosts"
+    why: "No view of Entra sign-ins; this is the host-level record of the vendor's access. A vendor account used from an address the vendor does not own is the attacker using the stolen access."
+    how: null
+    fp: "VPN pools and jump hosts put the vendor behind your own addresses; exclude them and read the first hop from the VPN log instead."
+    query: |-
+      Hunt: Windows.EventLogs.RDPAuth
+        UserNameRegex = (?i)<vendor account prefix>
+        DateAfter     = <start of the exposure window>
+        (compare the source IPs in the results with the vendor's ranges)
+      Hunt: Windows.EventLogs.RDPAuth
+        SourceIPRegex = <vendor ip regex>          (regex, not CIDR: e.g. ^203\.0\.113\.)
+        DateAfter     = <start of the exposure window>
+      Hunt: Windows.Network.NetstatEnriched       (live connections)
+        IPRegex = <vendor ip regex>
+      Hunt: Linux.Network.NetstatEnriched
+        IPRegex = <vendor ip regex>
+    tested: null
+    attack:
+      - "T1078"
+      - "T1021.001"
+      - "T1133"
+  - id: "supply-chain-response/velociraptor/s6-shells-and-commands-launched-by-the-msp-s-remote"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Velociraptor"
+    title: "Shells and commands launched by the MSP's remote-management agent"
+    why: "An MSP's RMM agent is command-and-control as SYSTEM on every managed host (Kaseya VSA, 2021: a pushed 'hot-fix' procedure deployed ransomware through AgentMon.exe). Commands it launched during the window show whether the attacker used it inside our network."
+    how: null
+    fp: "Every legitimate RMM task spawns cmd and powershell as SYSTEM; without Sysmon or 4688 command lines, EvtxHunter sees only what the event log kept. Baseline the week before the window and diff."
+    query: |-
+      Hunt: Generic.System.Pstree               (live process chains)
+        CallChainFilter = (?i)<rmm agent exe>.*(cmd|powershell|pwsh|certutil|rundll32|bash)
+      Hunt: Windows.EventLogs.EvtxHunter         (history, if Sysmon or 4688 with command line is logged)
+        IocRegex  = (?i)<rmm agent exe>|-EncodedCommand|certutil.*-decode
+        DateAfter = <start of the exposure window>
+      Hunt: Linux.Sys.BashHistory                 (what the agent's shells ran, if interactive)
+        SearchRegex = (?i)curl|wget|base64|chmod \+x|crontab|systemctl enable
+    tested: null
+    attack:
+      - "T1219"
+      - "T1059.003"
+      - "T1059.001"
+  - id: "supply-chain-response/velociraptor/s6-install-time-execution-what-the-package-left-beh"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Velociraptor"
+    title: "Install-time execution: what the package left behind, and what node is running now"
+    why: "No process history without Sysmon or an EDR, so Velociraptor hunts what the payload left: the worm's dropped files (Shai-Hulud 2025: bundle.js, setup_bun.js, bun_environment.js, the credential dumps, migrate-repos.sh ), the shell history of the install and of trufflehog, the.bashrc sabotage from Nx s1ngularity, and the credential files it read ( ~/.npmrc, cloud SDK caches)."
+    how: null
+    fp: "bundle.js is a common legitimate file name, so it is not in the glob; hunt it by size and path (over 2 MB inside node_modules/<package>) if the advisory names it. Shell history only shows interactive installs; CI installs live in the job log."
+    query: |-
+      Hunt: Linux.Search.FileFinder
+        SearchFilesGlob = /{home/*,root,opt,srv,builds,tmp}/**/{setup_bun.js,bun_environment.js,truffleSecrets.json,actionsSecrets.json,cloud.json,environment.json,contents.json,migrate-repos.sh,inventory.txt}
+        Upload_File     = Y
+      Hunt: Windows.Search.FileFinder
+        SearchFilesGlob = C:\{Users\*,actions-runner,agent}\**\{setup_bun.js,bun_environment.js,truffleSecrets.json,actionsSecrets.json,migrate-repos.sh}
+      Hunt: Linux.Sys.BashHistory
+        SearchRegex = (?i)(npm|pnpm|yarn|bun|pip3?) (install|i|add|ci) .*<package>|trufflehog|gh repo create|npm publish|claude .*--dangerously|gemini .*--yolo
+      Hunt: Linux.Sys.BashHistory                (Nx s1ngularity appended a shutdown to shell rc files)
+        TargetGlob  = /{root,home/*}/.{bashrc,zshrc}
+        SearchRegex = shutdown
+      Hunt: Generic.System.Pstree               (live, while a build runs)
+        CallChainFilter = (?i)(node|bun).*(sh|bash|trufflehog|gh|claude|gemini|q)
+    tested: null
+    attack:
+      - "T1195.001"
+      - "T1059.007"
+      - "T1552.001"
+      - "T1567.001"
+  - id: "supply-chain-response/splunk/s2-every-external-tenant-with-a-path-into-ours-gues"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Our connection"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "Every external tenant with a path into ours: guests, direct connect, GDAP and DAP"
+    why: "The vendor register is usually incomplete. Sign-ins carry the home tenant and the path: serviceProvider is an MSP acting through Partner Center (GDAP or DAP), b2bCollaboration a guest. Each path has a different cut."
+    how: null
+    fp: "Your own MSP, Microsoft support ( microsoftSupport ) and every Teams shared-channel partner appear here legitimately; the first search is the inventory, and any serviceProvider tenant you cannot name is its own finding."
+    query: |-
+      sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs) properties.crossTenantAccessType!=none
+      | stats count as signins max(_time) as last_seen dc(properties.userPrincipalName) as users
+          by properties.homeTenantId properties.crossTenantAccessType
+      | convert ctime(last_seen)
+      `comment("the named vendor: accounts, apps, and its service principals")`
+      sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs, ServicePrincipalSignInLogs)
+        (properties.homeTenantId="<vendor tenant id>" OR properties.appOwnerTenantId="<vendor tenant id>" OR properties.appId="<vendor app id>")
+      | stats max(_time) as last_seen values(properties.appDisplayName) as apps values(properties.ipAddress) as ips
+          by category properties.userPrincipalName properties.crossTenantAccessType properties.servicePrincipalName properties.appOwnerTenantId
+      | convert ctime(last_seen)
+    tested: null
+    attack:
+      - "T1199"
+      - "T1078.004"
+  - id: "supply-chain-response/splunk/s3-which-vendor-app-credential-is-in-use-was-one-ad"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Credentials"
+    stage_ord: 3
+    platform: "Splunk"
+    title: "Which vendor-app credential is in use, was one added, and whose tenant holds it"
+    why: "Rotating the wrong secret leaves the attacker in; a credential, consent or role added during the window is the attacker's own foothold and is removed, not rotated. If appOwnerTenantId is the vendor's, the secret is on their app object: only they can rotate it, and the key id from the sign-in is what you send them."
+    how: null
+    fp: "A vendor's scheduled credential rollover fires 'Add service principal credentials' legitimately; the tell is a second credential added without the old one removed, or a user (not admin) consent."
+    query: |-
+      sourcetype=azure:monitor:aad category=AuditLogs
+        (operationName="Add service principal credentials" OR operationName="Update application*Certificates and secrets management*"
+         OR operationName="Consent to application" OR operationName="Add app role assignment to service principal" OR operationName="Add delegated permission grant")
+        "<vendor app name>"
+      | table _time operationName properties.initiatedBy.user.userPrincipalName properties.targetResources{}.displayName
+      `comment("the key the app signs in with")`
+      sourcetype=azure:monitor:aad category=ServicePrincipalSignInLogs properties.appId="<vendor app id>"
+      | stats min(_time) as first_seen max(_time) as last_seen count by properties.appOwnerTenantId properties.servicePrincipalCredentialKeyId properties.servicePrincipalCredentialThumbprint
+      | convert ctime(first_seen) ctime(last_seen)
+    tested: null
+    attack:
+      - "T1098.001"
+      - "T1528"
+  - id: "supply-chain-response/splunk/s4-where-the-package-the-vendor-binary-or-the-sidel"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "Splunk"
+    title: "Where the package, the vendor binary or the sideloaded payload exists, ran or was loaded"
+    why: "Every host with the bad version is in scope, including CI runners and developer laptops no asset register lists. Sysmon 7 (image load) carries the signer, so it catches both the sideloaded payload (3CX, 2023: ffmpeg.dll loaded by the signed desktop app) and every other file signed with the vendor's certificate."
+    how: null
+    fp: "Sysmon 7 is high volume and usually filtered to a few processes in the config; check the config before trusting an empty result. Every legitimate vendor binary matches the signer: the serial, a signing time inside the window and files not on the vendor's release manifest are the discriminators."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"
+        ((EventCode=1 (Hashes="*<sha256 of installer>*" OR Hashes="*<sha256 of payload dll>*"))
+         OR (EventCode=7 (Hashes="*<sha256 of payload dll>*" OR (ImageLoaded="*\\<sideloaded dll>" Image="*\\<vendor exe>")))
+         OR (EventCode=11 TargetFilename="*node_modules*<package>*package.json"))
+      | stats min(_time) as first_seen by host EventCode Image ImageLoaded TargetFilename Signature SignatureStatus
+      | convert ctime(first_seen)
+      `comment("everything signed with the vendor's certificate: Sysmon 7 Signature is the signer name; the serial is not logged, check it on the sample with Get-AuthenticodeSignature")`
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=7 Signed=true Signature="<vendor signer name>"
+      | stats dc(host) as hosts values(Hashes) as hashes min(_time) as first_seen by ImageLoaded Image SignatureStatus
+      | convert ctime(first_seen)
+      `comment("Linux runners with Sysmon for Linux: source=\"Syslog:Linux-Sysmon/Operational\" (sourcetype=sysmon:linux)")`
+    tested: null
+    attack:
+      - "T1195.002"
+      - "T1195.001"
+      - "T1574.001"
+  - id: "supply-chain-response/splunk/s5-vendor-accounts-apps-and-msp-technicians-signing"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Splunk"
+    title: "Vendor accounts, apps and MSP technicians signing in from outside the vendor's ranges"
+    why: "A vendor identity used from an address the vendor does not own is the attacker using the stolen access, and moves the incident from theirs to ours. GDAP sessions come from the MSP's technicians' own egress: ask the MSP for that list first."
+    how: null
+    fp: "Vendors run from cloud egress that changes without notice and technicians work from home. A new ASN with a known credential key id is a question for the vendor; a new key id, user agent and ASN together is the attacker."
+    query: |-
+      sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs, ServicePrincipalSignInLogs)
+        (properties.homeTenantId="<vendor tenant id>" OR properties.appId="<vendor app id>")
+      | where NOT cidrmatch("<vendor cidr>", 'properties.ipAddress')
+      | stats count min(_time) as first_seen by properties.userPrincipalName properties.crossTenantAccessType properties.servicePrincipalId properties.ipAddress properties.appDisplayName properties.servicePrincipalCredentialKeyId
+      | convert ctime(first_seen)
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1199"
+  - id: "supply-chain-response/splunk/s5-connections-and-logons-into-our-hosts-from-the-v"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Splunk"
+    title: "Connections and logons into our hosts from the vendor's ranges"
+    why: "These are the hosts the vendor (or whoever holds its access) actually reaches; they are where to look for spread and what to cut off first."
+    how: null
+    fp: null
+    query: |-
+      index=windows ((source="XmlWinEventLog:Security" EventCode=4624)
+        OR (source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=3 Initiated="false"))
+      | eval src=coalesce(IpAddress, SourceIp)
+      | where cidrmatch("<vendor cidr>", src)
+      | stats count by host EventCode TargetUserName Image DestinationPort
+      `comment("firewall and VPN logs: the same cidrmatch on your firewall index's source-IP field")`
+    tested: null
+    attack:
+      - "T1133"
+      - "T1021.001"
+  - id: "supply-chain-response/splunk/s5-stolen-ci-credentials-used-in-the-cloud-oidc-rol"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Splunk"
+    title: "Stolen CI credentials used in the cloud: OIDC role assumption from an unexpected subject"
+    why: "A package that ran on a runner had the runner's OIDC token and any long-lived keys in its environment. On AssumeRoleWithWebIdentity, userIdentity.userName is the token's sub claim (GitHub: repo:org/repo:ref:refs/heads/main ); a subject or source address you cannot map to a workflow is the stolen token in use. CloudTrail event history keeps 90 d; the add-on keeps what your index does."
+    how: null
+    fp: "A subject you do not recognise is usually a renamed repository or a new workflow. A pull_request subject assuming a deploy role, or GitHub-hosted runner traffic from outside GitHub's published actions ranges (api.github.com/meta), is not."
+    query: |-
+      sourcetype=aws:cloudtrail eventName=AssumeRoleWithWebIdentity
+      | rename userIdentity.userName as sub, requestParameters.roleArn as role
+      | where NOT like(sub, "repo:<org>/%") OR like(sub, "%pull_request%") OR NOT cidrmatch("<runner egress cidr>", sourceIPAddress)
+      | stats count min(_time) as first_seen values(sourceIPAddress) as ips by sub role
+      | convert ctime(first_seen)
+      `comment("long-lived keys that lived on runners or laptops: everything they did from a new address")`
+      sourcetype=aws:cloudtrail userIdentity.accessKeyId IN ("<leaked access key ids>")
+      | stats count values(eventName) as events by userIdentity.accessKeyId sourceIPAddress userAgent
+    tested: null
+    attack:
+      - "T1550.001"
+      - "T1078.004"
+  - id: "supply-chain-response/splunk/s6-shells-and-commands-launched-by-the-msp-s-remote"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Splunk"
+    title: "Shells and commands launched by the MSP's remote-management agent"
+    why: "An MSP's RMM agent is command-and-control as SYSTEM on every managed host (Kaseya VSA, 2021: a pushed 'hot-fix' procedure deployed ransomware through AgentMon.exe). Commands it launched during the window show whether the attacker used it inside our network."
+    how: null
+    fp: "Every legitimate RMM task spawns cmd and powershell as SYSTEM. Baseline the week before the window and diff; encoded commands, certutil decoding, Defender tampering and shells on hosts with no open ticket are the signal."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1
+        ParentImage IN ("*\\AgentMon.exe", "*\\ScreenConnect.ClientService.exe", "*\\AteraAgent.exe", "*\\NinjaRMMAgent.exe", "*\\CagService.exe", "*\\BASupSrvc.exe", "*\\<rmm agent exe>")
+        (Image="*\\cmd.exe" OR Image="*\\powershell.exe" OR Image="*\\pwsh.exe" OR Image="*\\rundll32.exe" OR Image="*\\certutil.exe" OR Image="*\\msiexec.exe")
+      | eval suspicious=if(match(CommandLine, "(?i)-enc|-EncodedCommand|certutil|-decode|DisableRealtimeMonitoring|vssadmin|bcdedit"), "yes", "no")
+      | stats dc(host) as hosts values(host) as host_list min(_time) as first_seen by ParentImage Image User suspicious CommandLine
+      | convert ctime(first_seen)
+    tested: null
+    attack:
+      - "T1219"
+      - "T1059.003"
+      - "T1059.001"
+  - id: "supply-chain-response/splunk/s6-install-time-execution-lifecycle-scripts-in-proc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Splunk"
+    title: "Install-time execution: lifecycle scripts, in-process credential theft and the 2025 worm pattern"
+    why: "npm runs lifecycle scripts through cmd.exe /d /s /c on Windows and sh -c elsewhere, with node as the parent. In-process payloads never spawn curl: Shai-Hulud (2025) ran inside node, fetched trufflehog, read ~/.npmrc and cloud credential files, talked to api.github.com and published with the stolen token; Nx s1ngularity used installed claude, gemini and q CLIs as the secret finder. Hunt node's children, its DNS and its file writes, not a download tool."
+    how: null
+    fp: "Search 1 fires on node-gyp builds, husky and every legitimate install script: read the command lines. Search 2: editors are node processes and developers run gh and AI CLIs from them; ParentCommandLine separates an editor from an npm install. Search 3 needs Sysmon 22 enabled in the config; node resolving api.github.com is normal on a laptop, abnormal on a CI runner during an install step."
+    query: |-
+      `comment("1. lifecycle scripts in the window, scoped to the package")`
+      index=* (source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" OR source="Syslog:Linux-Sysmon/Operational") EventCode=1
+        (ParentImage="*\\node.exe" OR ParentImage="*/node")
+        ((Image="*\\cmd.exe" CommandLine="*/d /s /c*") OR (Image IN ("*/sh", "*/bash", "*/dash") CommandLine="* -c *"))
+        (CommandLine="*<package>*" OR CommandLine="*preinstall*" OR CommandLine="*postinstall*")
+      | stats min(_time) as first_seen values(CommandLine) as cmds by host User
+      `comment("2. node or bun spawning the tools the worms used")`
+      index=* (source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" OR source="Syslog:Linux-Sysmon/Operational") EventCode=1
+        (ParentImage IN ("*\\node.exe", "*/node", "*\\bun.exe", "*/bun"))
+        (Image IN ("*/trufflehog", "*\\trufflehog.exe", "*/gh", "*\\gh.exe", "*/claude", "*/gemini", "*/q", "*\\q.exe")
+         OR CommandLine IN ("*--dangerously-skip-permissions*", "*--yolo*", "*--trust-all-tools*", "*npm publish*", "*gh repo create*", "*gh auth*", "*/tmp/inventory.txt*"))
+      | table _time host User Image CommandLine ParentCommandLine
+      `comment("3. node, bun or trufflehog resolving GitHub, a webhook sink or the registry (Sysmon 22), or hitting the metadata service (Sysmon 3)")`
+      index=* (source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" OR source="Syslog:Linux-Sysmon/Operational")
+        (Image IN ("*\\node.exe", "*/node", "*\\bun.exe", "*/bun", "*/trufflehog", "*\\trufflehog.exe"))
+        ((EventCode=22 QueryName IN ("api.github.com", "webhook.site", "registry.npmjs.org")) OR (EventCode=3 DestinationIp="169.254.169.254"))
+      | stats count min(_time) as first_seen by host Image QueryName DestinationIp
+      `comment("4. files the worms wrote (Sysmon 11)")`
+      index=* (source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" OR source="Syslog:Linux-Sysmon/Operational") EventCode=11
+        TargetFilename IN ("*setup_bun.js", "*bun_environment.js", "*truffleSecrets.json", "*actionsSecrets.json", "*cloud.json", "*environment.json", "*migrate-repos.sh", "*shai-hulud-workflow.yml")
+      | stats dc(host) as hosts values(TargetFilename) as paths by Image
+    tested: null
+    attack:
+      - "T1195.001"
+      - "T1059.007"
+      - "T1552.001"
+      - "T1567.001"
+  - id: "supply-chain-response/elastic/s2-every-external-tenant-with-a-path-into-ours-gues"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Our connection"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "Every external tenant with a path into ours: guests, direct connect, GDAP and DAP"
+    why: "The vendor register is usually incomplete. Sign-ins carry the home tenant and the path: serviceProvider is an MSP acting through Partner Center (GDAP or DAP), b2bCollaboration a guest. Each path has a different cut."
+    how: null
+    fp: "Your own MSP, Microsoft support ( microsoftSupport ) and every Teams shared-channel partner appear here legitimately; the first query is the inventory, and any serviceProvider tenant you cannot name is its own finding."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > NOW() - 90 days AND azure.signinlogs.properties.cross_tenant_access_type != "none"
+      | STATS signins = COUNT(*), last_seen = MAX(@timestamp), users = COUNT_DISTINCT(azure.signinlogs.properties.user_principal_name)
+          BY azure.signinlogs.properties.home_tenant_id, azure.signinlogs.properties.cross_tenant_access_type
+      // The named vendor: accounts, apps and the path used
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > NOW() - 90 days
+      | WHERE azure.signinlogs.properties.home_tenant_id == "<vendor tenant id>"
+           OR azure.signinlogs.properties.app_id == "<vendor app id>"
+      | STATS last_seen = MAX(@timestamp), signins = COUNT(*)
+          BY azure.signinlogs.category, azure.signinlogs.properties.user_principal_name,
+             azure.signinlogs.properties.cross_tenant_access_type, azure.signinlogs.properties.service_principal_name
+    tested: null
+    attack:
+      - "T1199"
+      - "T1078.004"
+  - id: "supply-chain-response/elastic/s3-which-vendor-app-credential-is-in-use-was-one-ad"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Credentials"
+    stage_ord: 3
+    platform: "Elastic / Wazuh"
+    title: "Which vendor-app credential is in use, was one added, and whose tenant holds it"
+    why: "Rotating the wrong secret leaves the attacker in; a credential, consent or role added during the window is the attacker's own foothold and is removed, not rotated. A multi-tenant vendor app's secret is on the app object in the vendor's tenant: only they can rotate it, and the key id from the sign-in is what you send them (the owner tenant is on the Graph servicePrincipal as appOwnerOrganizationId )."
+    how: null
+    fp: "A vendor's scheduled credential rollover fires 'Add service principal credentials' legitimately; the tell is a second credential added without the old one removed, or a user (not admin) consent."
+    query: |-
+      FROM logs-azure.auditlogs-*
+      | WHERE @timestamp > NOW() - 30 days
+      | WHERE azure.auditlogs.operation_name IN ("Add service principal credentials", "Consent to application",
+                "Add app role assignment to service principal", "Add delegated permission grant")
+           OR azure.auditlogs.operation_name LIKE "*Certificates and secrets management*"
+      | KEEP @timestamp, azure.auditlogs.operation_name, azure.auditlogs.properties.initiated_by.user.userPrincipalName,
+             azure.auditlogs.properties.target_resources.*
+      // Filter on <vendor app name> in target_resources. The key the app signs in with is in the
+      // service-principal sign-in properties (same integration, category ServicePrincipalSignInLogs).
+    tested: null
+    attack:
+      - "T1098.001"
+      - "T1528"
+  - id: "supply-chain-response/elastic/s4-where-the-package-the-vendor-binary-or-the-sidel"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "Elastic / Wazuh"
+    title: "Where the package, the vendor binary or the sideloaded payload exists, ran or was loaded"
+    why: "Every host with the bad version is in scope, including CI runners and developer laptops no asset register lists. A trojanised installer often carries the payload as a sideloaded library (3CX, 2023: ffmpeg.dll loaded by the signed desktop app), so the installer hash alone misses the hosts that matter."
+    how: null
+    fp: "Library events need Elastic Defend (or Sysmon 7, usually filtered in the config); an empty result is not absence. The package.json write is the install event, so a package installed before retention is invisible here."
+    query: |-
+      any where
+        process.hash.sha256 in ("<sha256 of installer>", "<sha256 of payload dll>") or
+        file.hash.sha256 in ("<sha256 of installer>", "<sha256 of payload dll>") or
+        dll.hash.sha256 == "<sha256 of payload dll>" or
+        (event.category == "file" and file.path : ("*/node_modules/<package>/package.json",
+                                                   "*\\node_modules\\<package>\\package.json"))
+      // The sideloaded payload by name and parent, hash-agnostic
+      library where dll.name : "<sideloaded dll>" and process.name : "<vendor exe>"
+    tested: null
+    attack:
+      - "T1195.002"
+      - "T1195.001"
+      - "T1574.001"
+  - id: "supply-chain-response/elastic/s4-everything-signed-with-the-vendor-s-stolen-certi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "Elastic / Wazuh"
+    title: "Everything signed with the vendor's stolen certificate"
+    why: "A stolen signing key makes a hash block insufficient: the attacker can sign a new payload. Hunt by signer across process starts and library loads, then block the signer in the Defend blocklist and every hash it returned."
+    how: null
+    fp: "Every legitimate binary from the vendor matches the signer; the discriminators are the serial of the leaked certificate, a code_signature.timestamp inside the compromise window, and files the vendor's release manifest does not list."
+    query: |-
+      any where
+        process.code_signature.subject_name : "<vendor signer name>" or
+        dll.code_signature.subject_name : "<vendor signer name>"
+      // ECS carries subject_name, trusted, status and timestamp, not the serial: check the serial on the sample
+      // with Get-AuthenticodeSignature. trusted stays true until the CA revokes and the host fetches the CRL;
+      // a countersignature dated before the revocation keeps it true even then.
+    tested: null
+    attack:
+      - "T1553.002"
+      - "T1588.003"
+  - id: "supply-chain-response/elastic/s5-vendor-accounts-apps-and-msp-technicians-signing"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Elastic / Wazuh"
+    title: "Vendor accounts, apps and MSP technicians signing in from outside the vendor's ranges"
+    why: "A vendor identity used from an address the vendor does not own is the attacker using the stolen access, and moves the incident from theirs to ours. GDAP sessions come from the MSP's technicians' own egress: ask the MSP for that list first."
+    how: null
+    fp: "Vendors run from cloud egress that changes without notice and technicians work from home. A new ASN with a known credential key id is a question for the vendor; a new key id, user agent and ASN together is the attacker."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > NOW() - 30 days
+      | WHERE azure.signinlogs.properties.home_tenant_id == "<vendor tenant id>"
+           OR azure.signinlogs.properties.app_id == "<vendor app id>"
+      | WHERE NOT CIDR_MATCH(source.ip, "<vendor cidr>")
+      | STATS signins = COUNT(*), first_seen = MIN(@timestamp)
+          BY azure.signinlogs.properties.user_principal_name, azure.signinlogs.properties.cross_tenant_access_type,
+             azure.signinlogs.properties.service_principal_name, source.ip
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1199"
+  - id: "supply-chain-response/elastic/s5-connections-and-logons-into-our-hosts-from-the-v"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Elastic / Wazuh"
+    title: "Connections and logons into our hosts from the vendor's ranges"
+    why: "These are the hosts the vendor (or whoever holds its access) actually reaches; they are where to look for spread and what to cut off first."
+    how: null
+    fp: null
+    query: |-
+      FROM logs-*
+      | WHERE @timestamp > NOW() - 30 days
+      | WHERE CIDR_MATCH(source.ip, "<vendor cidr>")
+      | STATS events = COUNT(*) BY host.name, event.dataset, destination.port, user.name
+    tested: null
+    attack:
+      - "T1133"
+      - "T1021.001"
+  - id: "supply-chain-response/elastic/s5-stolen-ci-credentials-used-in-the-cloud-oidc-rol"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Elastic / Wazuh"
+    title: "Stolen CI credentials used in the cloud: OIDC role assumption from an unexpected subject"
+    why: "A package that ran on a runner had the runner's OIDC token and any long-lived keys in its environment. On AssumeRoleWithWebIdentity the user name is the token's sub claim (GitHub: repo:org/repo:ref:refs/heads/main ); a subject or source address you cannot map to a workflow is the stolen token in use. CloudTrail event history keeps 90 d; the integration keeps what your ILM policy does."
+    how: null
+    fp: "A subject you do not recognise is usually a renamed repository or a new workflow. A pull_request subject assuming a deploy role, or GitHub-hosted runner traffic from outside GitHub's published actions ranges (api.github.com/meta), is not."
+    query: |-
+      FROM logs-aws.cloudtrail-*
+      | WHERE @timestamp > NOW() - 30 days AND event.action == "AssumeRoleWithWebIdentity"
+      | WHERE NOT user.name LIKE "repo:<org>/*" OR user.name LIKE "*pull_request*" OR NOT CIDR_MATCH(source.ip, "<runner egress cidr>")
+      | STATS count = COUNT(*), first_seen = MIN(@timestamp), ips = VALUES(source.ip) BY user.name, aws.cloudtrail.user_identity.type
+      // Long-lived keys that lived on runners or laptops: everything they did from a new address
+      FROM logs-aws.cloudtrail-*
+      | WHERE @timestamp > NOW() - 30 days AND aws.cloudtrail.user_identity.access_key_id IN ("<leaked access key ids>")
+      | STATS calls = COUNT(*), events = VALUES(event.action) BY aws.cloudtrail.user_identity.access_key_id, source.ip, user_agent.original
+    tested: null
+    attack:
+      - "T1550.001"
+      - "T1078.004"
+  - id: "supply-chain-response/elastic/s6-shells-and-commands-launched-by-the-msp-s-remote"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Elastic / Wazuh"
+    title: "Shells and commands launched by the MSP's remote-management agent"
+    why: "An MSP's RMM agent is command-and-control as SYSTEM on every managed host (Kaseya VSA, 2021: a pushed 'hot-fix' procedure deployed ransomware through AgentMon.exe). Commands it launched during the window show whether the attacker used it inside our network."
+    how: null
+    fp: "Every legitimate RMM task spawns cmd and powershell as SYSTEM. Baseline the week before the window and diff; encoded commands, certutil decoding, Defender tampering and shells on hosts with no open ticket are the signal."
+    query: |-
+      process where event.type == "start" and
+        process.parent.name : ("AgentMon.exe", "ScreenConnect.ClientService.exe", "AteraAgent.exe", "NinjaRMMAgent.exe", "CagService.exe", "BASupSrvc.exe", "<rmm agent exe>") and
+        process.name : ("cmd.exe", "powershell.exe", "pwsh.exe", "rundll32.exe", "certutil.exe", "msiexec.exe", "sh", "bash")
+      // Narrow to the suspicious set: and process.command_line : ("*-enc*", "*-EncodedCommand*", "*certutil*", "*-decode*", "*DisableRealtimeMonitoring*", "*vssadmin*", "*bcdedit*")
+    tested: null
+    attack:
+      - "T1219"
+      - "T1059.003"
+      - "T1059.001"
+  - id: "supply-chain-response/elastic/s6-install-time-execution-lifecycle-scripts-in-proc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Elastic / Wazuh"
+    title: "Install-time execution: lifecycle scripts, in-process credential theft and the 2025 worm pattern"
+    why: "npm runs lifecycle scripts through cmd.exe /d /s /c on Windows and sh -c elsewhere, with node as the parent. In-process payloads never spawn curl: Shai-Hulud (2025) ran inside node, fetched trufflehog, read ~/.npmrc and cloud credential files, talked to api.github.com and published with the stolen token; Nx s1ngularity used installed claude, gemini and q CLIs as the secret finder. Hunt node's children, its DNS and its file writes, not a download tool."
+    how: null
+    fp: "Query 1 fires on node-gyp builds, husky and every legitimate install script: read the command lines. Query 2: editors are node processes and developers run gh and AI CLIs from them; the parent command line separates an editor from an npm install. Query 3 needs DNS events (Elastic Defend network events or Sysmon 22); node resolving api.github.com is normal on a laptop, abnormal on a CI runner during an install step."
+    query: |-
+      // 1. Lifecycle scripts in the window, scoped to the package
+      process where event.type == "start" and process.parent.name : ("node", "node.exe") and
+        ((process.name : "cmd.exe" and process.command_line : "*/d /s /c*") or
+         (process.name : ("sh", "bash", "dash") and process.args : "-c")) and
+        process.command_line : ("*<package>*", "*preinstall*", "*postinstall*")
+      // 2. Node or bun spawning the tools the worms used
+      process where event.type == "start" and process.parent.name : ("node", "node.exe", "bun", "bun.exe") and
+        (process.name : ("trufflehog", "trufflehog.exe", "gh", "gh.exe", "claude", "gemini", "q", "q.exe") or
+         process.command_line : ("*--dangerously-skip-permissions*", "*--yolo*", "*--trust-all-tools*", "*npm publish*", "*gh repo create*", "*gh auth*", "*/tmp/inventory.txt*"))
+      // 3. Node, bun or trufflehog resolving GitHub, a webhook sink or the registry, or hitting the metadata service
+      any where process.name : ("node", "node.exe", "bun", "bun.exe", "trufflehog", "trufflehog.exe") and
+        (dns.question.name : ("api.github.com", "webhook.site", "registry.npmjs.org") or destination.ip == "169.254.169.254")
+      // 4. Files the worms wrote
+      file where event.type : ("creation", "change") and
+        (file.name : ("setup_bun.js", "bun_environment.js", "truffleSecrets.json", "actionsSecrets.json", "cloud.json", "environment.json", "migrate-repos.sh", "shai-hulud-workflow.yml") or
+         (file.name : "bundle.js" and file.path : "*node_modules*" and file.size > 2000000))
+    tested: null
+    attack:
+      - "T1195.001"
+      - "T1059.007"
+      - "T1552.001"
+      - "T1567.001"
+  - id: "supply-chain-response/defender/s6-vendor-app-writing-to-other-identities-in-our-te"
+    status: "active"
+    source: "Huntress, 'Vendor Credential Enables Unauthorized Access' (https://www.huntress.com/blog/vendor-credential-enables-unauthorized-access); Microsoft Security Blog 2026-10-21 Storm-0940/ARTEX (https://www.microsoft.com/en-us/security/blog/2026/10/21/storm-0940-uses-artex-agentic-ai-connectwise-supply-chain-compromise/); discovered via T-Minus365 recreation video (distill 2026-10-25)"
+    validated_at: "2026-10-25"
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "Vendor app writing to other identities in our tenant: self-assigned roles and credentials planted on other apps"
+    why: "A compromised multi-tenant vendor app with RoleManagement.ReadWrite.Directory or Application.ReadWrite.All can make itself Global Administrator and plant credentials on OTHER apps in our tenant, which then outlive the vendor app being disabled and the vendor rotating its secret. ConnectWise Cloud Backup / SkyKick, Oct 2026 (Huntress): the ConnectWise Cloud Management – MS Teams app (24205314-2b89-4e07-a2a4-579e898a5640) gave itself Global Administrator, then added credentials to two other apps, one a single-tenant Huntress app. Secrets went onto apparently random apps, in one tenant some of the least privileged, so do not narrow the hunt to high-privilege targets. Operations to look for: \"Add member to role\", \"Add app role assignment to service principal\", \"Add service principal credentials\", and \"Update application\" where the modified property is KeyDescription (secrets/certificates) or FederatedIdentityCredentials. Initiator is the vendor service principal (InitiatedBy.app). Every role, credential or owner change the vendor app makes in our tenant is a finding, its own service principal included: a self-assigned role is the Global Administrator step, and a credential on its own service principal is a backdoor that survives the vendor rotating its secret. The vendor's real secret rotation happens on its application object in its own home tenant and writes no row in ours. Each target app becomes its own non-human-identity incident (identity-breach-response scenario 6): remove the planted credential, do not just rotate it."
+    how: null
+    fp: "Our own identity-governance or CI automation adds credentials and role assignments on a schedule; exclude its app ids from the initiator. Do not dismiss a row because the target is the vendor app itself: a multi-tenant vendor rotates its secret in its own tenant, so a credential or role change on its service principal in ours is not routine. The benign case is a change made by one of our own admins or automation to the vendor's service principal, which shows our initiator, not the vendor app. AuditLogs carries no IP for an app initiator, so take addresses from AADServicePrincipalSignInLogs for the same AppId and time."
+    query: |-
+      // Example ids from the ConnectWise advisory: Cloud Backup (506e08f9-...) and Cloud Management - MS Teams (24205314-...).
+      // Replace with the full app id list from the advisory for the vendor you are investigating.
+      let vendorAppIds = dynamic(["506e08f9-6e9a-4da4-942b-a099a03644ae","24205314-2b89-4e07-a2a4-579e898a5640"]);
+      AuditLogs
+      | where TimeGenerated > ago(30d)
+      | extend InitiatorAppId = tostring(InitiatedBy.app.appId), InitiatorName = tostring(InitiatedBy.app.displayName)
+      | where InitiatorAppId in (vendorAppIds)
+      | where OperationName in ("Add member to role","Add eligible member to role","Add app role assignment to service principal","Add service principal credentials","Add owner to application","Add owner to service principal")
+          or (OperationName startswith "Update application" and tostring(TargetResources) has_any ("KeyDescription","FederatedIdentityCredentials"))
+      | mv-expand Target = TargetResources
+      | extend TargetId = tostring(Target.id), TargetName = tostring(Target.displayName), TargetType = tostring(Target.type), Modified = Target.modifiedProperties
+      | project TimeGenerated, OperationName, Result, InitiatorName, InitiatorAppId, TargetType, TargetName, TargetId, Modified, CorrelationId
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1098.001"
+      - "T1098.003"
+  - id: "supply-chain-response/defender/s5-planted-on-apps-still-signing-in-after-the-vendo"
+    status: "active"
+    source: "Huntress ConnectWise/SkyKick advisory (credentials planted on other apps); Microsoft Learn 'Conditional Access for workload identities' (single-tenant SPs only, Workload ID Premium); distill 2026-10-25 of T-Minus365 recreation video (t=34:20 CA notApplied demo)"
+    validated_at: "2026-10-25"
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "Planted-on apps still signing in after the vendor app is disabled"
+    why: "Disabling the vendor's enterprise app and waiting for the vendor to rotate its secret ends only the first foothold. If the attacker planted a secret or certificate on one of our apps (stage 6), that app keeps getting app-only tokens with the new key, and no vendor-side action reaches it. A successful service-principal sign-in using a key id created in the exposure window, or from the vendor's IoC IPs or hosting/Azure IPv6 space, after the vendor app was disabled, means the attacker is still in. Conditional Access shows \"notApplied\" on every one of these sign-ins (CA for workload identities covers only single-tenant service principals and needs Workload ID Premium), so a missing CA block rules nothing out."
+    how: null
+    fp: "A credential our own team added and documented, signing in from our own automation's addresses, is benign; confirm the key id against the change record. With plantedKeyIds empty the query matches on the IoC IPs only, so populate it from the stage 6 results before reading an empty table as clean."
+    query: |-
+      let disabledAt = datetime(<when the vendor app was disabled>);
+      let plantedKeyIds = dynamic([]); // keyIds of credentials added in the window (stage 6 Modified/KeyDescription)
+      let iocIPs = dynamic(["144.172.64.128"]); // ConnectWise advisory IoC; replace with the advisory's list for your vendor
+      AADServicePrincipalSignInLogs
+      | where TimeGenerated > disabledAt
+      | where ResultType == "0"
+      | where ServicePrincipalCredentialKeyId in (plantedKeyIds) or IPAddress in (iocIPs)
+      | summarize First = min(TimeGenerated), Last = max(TimeGenerated), Count = count(), Resources = make_set(ResourceDisplayName) by ServicePrincipalName, AppId, ServicePrincipalCredentialKeyId, IPAddress, ConditionalAccessStatus
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "supply-chain-response/defender/s2-containing-a-compromised-vendor-multi-tenant-app"
+    status: "active"
+    source: "Huntress ConnectWise/SkyKick advisory (disable not delete); SpecterOps 2026-10-17 tenant check; ctipilot.ch 2026-10-18 (seven app ids, 90-min token tail, Entra Free 7-day retention, S-K LLC owner tenant); distill 2026-10-25 of T-Minus365 video (t=33:01)"
+    validated_at: "2026-10-25"
+    supersedes: null
+    stage: "Stage 2 · Our connection"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Containing a compromised vendor multi-tenant app: disable-not-delete, the token tail, and log retention"
+    why: "The vendor's secret sits on its app object in the vendor's tenant: we cannot rotate it, so the only lever on our side is setting the enterprise app's accountEnabled to false (Enabled for users to sign-in = No). Disable, do not delete. Deleting removes the consent and app-role assignments, and with them the record of what the app was allowed to do, before the investigation has used it (Huntress, SpecterOps). Disabling stops NEW token issuance only. An app-only access token already issued stays valid for its lifetime (60–90 min), so keep watching MicrosoftGraphActivityLogs for the AppId until at least 90 minutes after the disable, and only then treat later silence as containment. Export the sign-in and audit logs immediately: Entra ID Free keeps 7 days and P1/P2 keep 30, so an incident found late has already lost its first sign-ins unless they were streamed to Log Analytics. Disable every app ID in the vendor's advisory (seven for ConnectWise, dormant ones included) and list every app with appOwnerOrganizationId equal to the vendor's tenant (ConnectWise S-K LLC: 3f9cd7a0-127a-4ed4-bf06-2f830d5616b7). The advisory list can be incomplete."
+    how: null
+    fp: "Ruled out when none of the vendor's app ids exist as service principals here and no app has the vendor's owner tenant id. Graph calls up to 90 minutes after the disable can be the token tail, not a failed containment; a call more than 90 minutes after it is a failed containment."
+    query: |-
+      // Run the Graph PowerShell side first: Get-MgServicePrincipal -All -Property Id,AppId,DisplayName,AppOwnerOrganizationId,AccountEnabled | ? AppOwnerOrganizationId -eq '<vendor tenant id>'
+      // advisoryAppIds: every app id in the vendor's advisory. The two below are ConnectWise examples (Cloud Backup,
+      // Cloud Management - MS Teams); the ConnectWise advisory lists seven, so add the other five from it.
+      let advisoryAppIds = dynamic(["506e08f9-6e9a-4da4-942b-a099a03644ae","24205314-2b89-4e07-a2a4-579e898a5640"]);
+      let vendorTenantId = "<vendor tenant id>"; // ConnectWise S-K LLC: 3f9cd7a0-127a-4ed4-bf06-2f830d5616b7
+      // Any app owned by the vendor's tenant that has signed in here counts too, so an id missing from the advisory is still watched.
+      let ownedAppIds = AADServicePrincipalSignInLogs
+        | where TimeGenerated > ago(90d) and AppOwnerTenantId == vendorTenantId
+        | distinct AppId;
+      let disabledAt = datetime(<when the enterprise apps were disabled>);
+      MicrosoftGraphActivityLogs
+      | where TimeGenerated > disabledAt
+      | where AppId in (advisoryAppIds) or AppId in (ownedAppIds)
+      | extend MinutesAfterDisable = datetime_diff("minute", TimeGenerated, disabledAt)
+      | summarize Calls = count(), First = min(TimeGenerated), Last = max(TimeGenerated), Uris = make_set(RequestUri, 20),
+                  PastTokenTail = countif(MinutesAfterDisable > 90) by AppId, IPAddress, ResponseStatusCode
+      // PastTokenTail > 0 is a call more than 90 minutes after the disable: containment failed for that AppId.
+      | order by PastTokenTail desc, Last desc
+    tested: null
+    attack:
+      - "T1199"
+  - id: "supply-chain-response/defender/s4-sckit-worm-stage0-from-ai-agent-memory-packages"
+    status: "active"
+    source: "StepSecurity 2026-09-30 (corroborated by Socket, SafeDep, Aikido/THN)"
+    validated_at: "2026-10-25"
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "Sckit worm: install-time stage0 via AI-agent-memory packages (MemTensor npm/PyPI)"
+    why: "An npm lifecycle script or Python import chain that drops and executes a Go implant (process cmdline 'sckit stage0 --config64 <base64>') and beacons to per-victim 12-hex subdomains of skyleen[.]fr means install-time supply-chain compromise of AI-agent memory tooling; persistence lands under agent-runtime dirs ($HOME/.openclaw/.cache/runtime, $HOME/.memos/.cache/runtime, .sckit/<os>-<arch>/). Ruled out by: zero DNS answers for *.skyleen.fr in resolver history, no .cache/runtime under agent dirs, no sckit process cmdline. The domain is sinkhole-able; the durable discriminators are the per-victim-subdomain beacon pattern and the stage0 cmdline shape, not the IOC list."
+    how: "Run all four on every host that installed the MemTensor npm or PyPI packages, developer laptops and CI runners included. Defender for Endpoint on macOS and Linux fills the process, file and network tables; a runner without the sensor needs its job log and the registry proxy instead. RemoteUrl is the hostname Defender saw on the connection, not resolver history: for the 'zero DNS answers' falsifier, query the resolver or DnsEvents for *.skyleen.fr as well."
+    fp: "The agent tools create their own .cache/runtime directories on install: a hit on the path alone is not the implant. The discriminators are a new executable written there by node, npm or python, and the 'stage0 --config64' command line. The generic 12-hex-subdomain beacon line matches CDN and telemetry hosts too; it is only meaningful when the initiating process is node or python from the package path."
+    query: |-
+      // The stage0 implant by command-line shape: survives a new domain and a rebuilt binary
+      DeviceProcessEvents
+      | where Timestamp > ago(30d)
+      | where ProcessCommandLine has "stage0" and ProcessCommandLine has "--config64"
+      | project Timestamp, DeviceName, AccountName, FileName, FolderPath, SHA256, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+      // Drops under the agent-runtime directories and the implant's own tree, and who wrote them
+      DeviceFileEvents
+      | where Timestamp > ago(30d)
+      | where FolderPath matches regex @"[\\/]\.(openclaw|memos)[\\/]\.cache[\\/]runtime|[\\/]\.sckit[\\/]"
+      | summarize FirstSeen=min(Timestamp), Files=make_set(FileName, 20), Writers=make_set(InitiatingProcessFileName, 10)
+          by DeviceName, FolderPath
+      // Beacon to the known domain: per-victim 12-hex subdomains
+      DeviceNetworkEvents
+      | where Timestamp > ago(30d)
+      | where RemoteUrl endswith ".skyleen.fr"
+      | summarize FirstSeen=min(Timestamp), Subdomains=make_set(RemoteUrl, 20), Ports=make_set(RemotePort)
+          by DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath
+      // The same beacon shape on any domain, from node or python: the domain is sinkhole-able, the pattern is not
+      DeviceNetworkEvents
+      | where Timestamp > ago(30d)
+      | where InitiatingProcessFileName in~ ("node", "node.exe", "python", "python3", "python.exe")
+          or InitiatingProcessFolderPath has_any (".openclaw", ".memos", ".sckit")
+      | where RemoteUrl matches regex @"^[0-9a-f]{12}\.[a-z0-9-]+\.[a-z]{2,}$"
+      | summarize Hosts=dcount(DeviceName), Subdomains=make_set(RemoteUrl, 20)
+          by Domain=substring(RemoteUrl, 13), InitiatingProcessFileName
+    tested: null
+    attack:
+      - "T1195.001"
+      - "T1204.005"
+  - id: "supply-chain-response/proposed/python-startup-hook-persistence-pth-sitecustomize-py-written-into-site-packages"
+    status: "active"
+    source: "Socket / LiteLLM / Microsoft / Datadog reporting on the litellm 1.107.0 compromise (2026-10-21; OSV MAL-2026-2144)"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Velociraptor"
+    title: "Python startup-hook persistence: .pth / sitecustomize.py written into site-packages by a package install"
+    why: "A .pth line beginning with 'import' and a sitecustomize.py or usercustomize.py all execute on EVERY Python interpreter start, independent of importing the package, so uninstalling the package does not remove the payload (litellm 1.107.0, Oct 2026: cook.pth + sitecustomize.py loader that ran hourly, read a GitHub dead drop and executed /codepy). Hunt by RECORD, not by filename: the malicious wheel's dist-info/RECORD lists the hook files, a clean wheel does not. Legit .pth files (_virtualenv.pth, coloredlogs.pth, *-nspkg.pth, distutils-precedence.pth) and vendor sitecustomize.py (venvstacks/LM Studio) are common, so a filename hit alone is not a finding: read the content for import lines that open sockets, spawn processes, or decode base64. Rules out: hook file absent from the package RECORD and content limited to sys.path manipulation. Scope = every host/container/CI runner that started Python with the bad version installed; rotate every credential reachable from those processes."
+    how: null
+    fp: "Editable installs (pip install -e) write __editable__*.pth files that contain an import line by design; they name a local source path and a finder module, not a socket or a subprocess. Containers and CI runners are not enrolled clients: hunt their images and caches, or the job log, instead."
+    query: |-
+      Hunt: Generic.Detection.Yara.Glob          (hook files whose content does more than extend sys.path)
+        PathGlob = /{usr,usr/local,opt,home/*,root,srv,builds}/**/{site,dist}-packages/{*.pth,sitecustomize.py,usercustomize.py}
+        YaraRule = rule py_startup_hook { strings: $i = /(^|\n)import[ \t]/ $a = "exec(" $b = "b64decode" $c = "subprocess" $d = "socket" $e = "urlopen" condition: ($i and any of ($a,$b,$c,$d,$e)) or 2 of ($a,$b,$c,$d,$e) }
+      Hunt: Generic.Detection.Yara.Glob          (Windows)
+        PathGlob = C:\{Users\*\AppData,Program Files,ProgramData,actions-runner,agent}\**\site-packages\{*.pth,sitecustomize.py,usercustomize.py}
+        YaraRule = (as above)
+      Hunt: Generic.Detection.Yara.Glob          (which installed wheel put a hook file there)
+        PathGlob = /{usr,usr/local,opt,home/*,root,srv,builds}/**/{site,dist}-packages/*.dist-info/RECORD
+        YaraRule = rule py_hook_in_record { strings: $p = /(^|\n)[^\/\n,]+\.pth,/ $s = "sitecustomize.py," $u = "usercustomize.py," condition: any of them }
+      Hunt: Linux.Search.FileFinder               (collect every hit for reading)
+        SearchFilesGlob = <paths returned above>
+        Upload_File     = Y
+    tested: null
+    attack:
+      - "T1546.018"
+      - "T1195.001"
+  - id: "supply-chain-response/proposed/blockchain-dead-drop-c2-non-wallet-process-resolving-public-solana-rpc-endpoints"
+    status: "active"
+    source: "StepSecurity reporting on the OVHcloud CLI GlassWorm loader detonation (Oct 2026)"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 6 · Our spread"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "Blockchain dead-drop C2: non-wallet process resolving public Solana RPC endpoints"
+    why: "GlassWorm (OVHcloud CLI GitHub release swap + VS Code extension, Oct 2026) reads its C2 address from Solana transaction memos via public RPC (api.mainnet-beta.solana.com, solana-rpc.publicnode.com, solana.drpc.org, solana.api.onfinality.io, solana.api.pocket.network), so the C2 can rotate without any blockable domain. On a host or network with no crypto wallet or Solana tooling, any connection to these RPC hosts is high-signal; the initiating process (editor extension host, CLI binary, node) is the discriminator. Rules out: the process is a known wallet/dev tool the user runs, or the host legitimately does Solana development. Pivot: same process to a raw-IP HTTPS POST /upload (45.32.148.174), files under /tmp/envchecker-* or ~/init.json."
+    how: "A resolver log (AdGuard, Pi-hole, a DNS firewall) answers which host asked but not which process; use it for hosts without the sensor, then collect the process from the host."
+    fp: "Wallet apps, Solana CLI and SDK installs, and browsers with a wallet extension reach the same endpoints. publicnode.com, drpc.org, onfinality.io and pocket.network also serve other chains, which is why the list names the Solana hostnames and not the bare domains."
+    query: |-
+      let rpc = dynamic(["api.mainnet-beta.solana.com", "solana-rpc.publicnode.com", "solana.drpc.org", "solana.api.onfinality.io", "solana.api.pocket.network"]);
+      DeviceNetworkEvents
+      | where Timestamp between (datetime(<window start>) .. now())
+      | where RemoteUrl has_any (rpc)
+      | summarize first=min(Timestamp), last=max(Timestamp), connections=count()
+          by DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessAccountName, RemoteUrl
+      | order by first asc
+      // Pivot on the devices above: the exfil endpoint and the loader's files
+      DeviceNetworkEvents
+      | where Timestamp between (datetime(<window start>) .. now())
+      | where RemoteIP == "45.32.148.174"
+      | project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort
+      DeviceFileEvents
+      | where Timestamp between (datetime(<window start>) .. now())
+      | where FolderPath startswith "/tmp/envchecker-" or (FileName == "init.json" and FolderPath matches regex @"^/(home|Users)/[^/]+/init\.json$")
+      | project Timestamp, DeviceName, ActionType, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine
+    tested: null
+    attack:
+      - "T1102.001"
+      - "T1195.002"
+  - id: "supply-chain-response/proposed/extension-exposure-is-scoped-by-editor-marketplace-and-version-during-the-window"
+    status: "active"
+    source: "research@2026-10-30 https://cursor.com/blog/claude-code-extension-security-notice https://opensourcemalware.com/blog/trojanized-claude-code-extension-plants-persistent-ssh-backdoor"
+    validated_at: "2026-10-31"
+    supersedes: null
+    stage: "Stage 4 · Software"
+    stage_ord: 4
+    platform: "Velociraptor"
+    title: "Extension exposure is scoped by editor, marketplace and version during the window, not by extension id"
+    why: "The same extension id is served by several marketplaces (Microsoft, Open VSX, Cursor's, browser stores), and they can differ: in the October 2026 Claude Code case only the Cursor Marketplace copies of 2.1.312 and 2.1.313 were malicious. Auto-update installs a bad version on every host whose editor or browser ran while it was live, without anyone choosing to. A host is exposed when its inventory shows any of the bad versions from the affected marketplace, in that editor, inside the window; the same id from another marketplace, or a version outside the window, rules it out."
+    how: null
+    fp: null
+    query: ""
+    tested: null
+    attack: []
+  - id: "supply-chain-response/proposed/an-editor-or-extension-host-process-writing-ssh-keys-or-autostart-entries-or-ope"
+    status: "active"
+    source: "research@2026-10-30 https://cursor.com/blog/claude-code-extension-security-notice https://opensourcemalware.com/blog/trojanized-claude-code-extension-plants-persistent-ssh-backdoor"
+    validated_at: "2026-10-31"
+    supersedes: null
+    stage: "Stage 5 · Activity"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "An editor or extension-host process writing SSH keys or autostart entries, or opening a reverse SSH tunnel"
+    why: "Editors and browsers have no reason to modify authorized_keys, create LaunchAgents, cron entries, scheduled tasks or Startup items, or start ssh with -R. The trojanised Claude Code extension did all of these from the editor's own process tree, appending a key with the comment svc-telemetry and tunnelling to 134.209.82.225. Any such write or spawn with an editor, extension host or browser as ancestor is the extension acting; removing the extension leaves what it wrote, so the persistence is collected and removed separately."
+    how: null
+    fp: null
+    query: ""
+    tested: null
+    attack: []
+steps:
+  - ord: 1
+    time: "T+0–15 min"
+    title: "Verify the notice, check for impact, declare when you find it"
+    why: "Reach the vendor's security team on a contact you already had — never through a link or number in the notice. For a package, take the facts from the advisory: package name, malicious versions, when they were published and pulled, and the published IOCs. Bring in security, IT, the engineering lead, legal and communications. A notice alone is intelligence, not yet your incident: declare and name one incident lead as soon as you find the bad version installed, or the vendor's access used — or straight away if the supplier held privileged access (RMM, admin accounts, code running on your hosts) that you can't rule out. Why: breach notifications are also used as phishing lures, and the publication-to-removal window is your scope — any install in it counts, even if you are on a good version now."
+    critical: true
+  - ord: 2
+    time: "T+15–60 min"
+    title: "Find every place you are connected, or it was installed"
+    why: "Vendor: its accounts and guests, API keys, OAuth apps, VPN access, firewall rules and the software of theirs you run. MSP: the paths that never show as a vendor account — the GDAP or DAP relationship (Microsoft 365 admin center › Settings › Partner relationships), Azure Lighthouse delegations ( az managedservices assignment list per subscription, or Azure portal › Service providers), its RMM agent on your hosts, and apps it authorised in Salesforce, Google Workspace, Slack or GitHub, which Entra never lists. Package: lockfiles across all repositories, the uses: lines of every workflow, CI build logs and caches, container images and their base-image digests, OS packages on hosts and images (xz-utils was a distro package, not a lockfile entry), developer machines, production hosts. Why: you can only cut and rotate what you have listed. Lockfiles show what should be installed; CI logs and SBOMs of built images show what actually was, and when; a pinned action's own dependencies are not pinned by your SHA."
+    critical: true
+  - ord: 3
+    time: "T+15–60 min, in parallel"
+    title: "Export first: preserve what ages out, and what the vendor can delete"
+    why: "Retention runs against you from the start: Entra sign-ins 30 days on P1/P2 and 7 free, the unified audit log 180 days Standard and 1 year Premium, CloudTrail event history 90 days, GitHub Actions run logs 90 days by default, the organisation audit log 180 days (Git events 7). The vendor's earliest access date is routinely months before its notice, so widen every window to that date and export from it. For a package, preserve the tarball and its registry metadata: the registry removes malicious versions, and your cache is then the only copy. Why: a hunt you cannot re-run is a finding you cannot defend to a regulator, an insurer or a court. Send the vendor a litigation-hold letter on day one and ask for its IR firm's report; a statement that there is “no evidence of” exfiltration describes their logging, not your data."
+    critical: true
+  - ord: 4
+    time: "T+15–90 min, in parallel"
+    title: "Look for the access being used"
+    why: "Sign-in, API and firewall logs for the vendor's IP ranges, service accounts, guests, GDAP technicians and integrations; cloud audit logs for role assumptions and API calls from unknown subjects and IPs; the GitHub audit log for repositories, workflows, tokens, secrets and pushes the package's stolen token could have made; your own packages' publish history, owners and dist-tags — back to the start of the window. Run this alongside the inventory, not after the cut: every new account, token, workflow, repository or host it turns up joins the list for the next step. Why: revoking stops future use; only the logs show what was already done, and a foothold you find after the cut is one the attacker kept. The 2025 npm worms used the stolen token within minutes to create repositories, add workflows and publish trojanised versions of the victim's own packages. This is where a vendor incident becomes yours — use the hunts under Hunt & Act by Platform."
+    critical: true
+  - ord: 5
+    time: "T+60–120 min"
+    title: "Cut every path and revoke every credential — one action"
+    why: "Paths. Vendor: suspend integrations, file transfers and syncs; disable its accounts and guests, VPN and RMM access; restrict the network segments and firewall rules that let its services in. MSP: each path has its own switch and Update-MgServicePrincipal flips none of them — end the GDAP or DAP relationship (admin center › Partner relationships › Remove roles), delete every Lighthouse assignment, block the partner tenant inbound in cross-tenant access settings (guests and direct connect only; it does not govern GDAP), disable the RMM agent service fleet-wide and revoke the RMM's API keys. SaaS-to-SaaS: revoke the vendor's connected app in each platform it was authorised in; the Entra cut does not reach a Salesforce or Workspace grant. Package: block the bad versions in your registry proxy and pause the CI workflows that pull it; network-contain the hosts and runners where it ran — they get rebuilt from clean later, not cleaned in place (see Rebuild from clean below). Trojanised update: block the vendor's update host until it confirms a clean release, and block the stolen certificate, not only the hashes. Credentials, in the same pass. Vendor: API keys, OAuth tokens and app consents, service accounts and VPN accounts it holds; reset any password shared with it. A multi-tenant vendor app's secret lives on the app object in the vendor's tenant: you cannot rotate it, so send the vendor the key id from the stage 3 hunt and get written confirmation. Package: everything readable from where it ran, listed below. Revoke first, then reissue. Pins. Pin to the last known-good version only after checking it: its hash or signature matches the registry's record, it was published before the compromise window, and the advisory doesn't list it. For a GitHub Action, pin to a full commit SHA and verify that SHA against the upstream commit history, not against the tag: in the tj-actions/changed-files incident (March 2025) every version tag was moved to the malicious commit. A SHA pin covers that action only; the actions it calls internally are pinned however its author pinned them. Why: a path left open while another is cut is a warning, not a containment; most malicious packages are credential stealers, and self-spreading ones use stolen publish tokens to trojanise the victim's own packages next. The next build reinstalls whatever the pin points at, and tags can be moved by whoever controls the repository."
+    critical: true
+  - ord: 6
+    time: "T+2–4 h"
+    title: "Verify the cut held"
+    why: "Re-run the access hunt from the moment of the cut: any sign-in, API call, token use or connection from the supplier's accounts, ranges or integrations afterwards means a path was missed. Widen the cut before moving on. Why: the containment is proven by the logs after it, not by the list of actions you took."
+    critical: true
+  - ord: 7
+    time: null
+    title: "Gate: eradication confirmed before anything reconnects"
+    why: "Before rebuilt hosts rejoin the network, reissued credentials go back into CI, or paused workflows restart: every known foothold is removed or rebuilt, and a verification hunt shows no activity from the supplier's paths or the payload's indicators since the eviction time. Record who confirmed it and when. Why: recovery that starts before eradication is finished hands the attacker a clean, trusted foothold — this gate covers your own systems; the vendor decision below covers theirs."
+    critical: true
+actions:
+  - platform: "Defender XDR / Sentinel"
+    label: "T+15–60 · Export"
+    name: "Export the identity evidence before it ages out"
+    tier: "read"
+    tier_inferred: false
+    why: "the Entra portal keeps sign-ins 30 d on P1/P2 and 7 d free, the unified audit log 180 d on Standard and 1 y on Premium, Defender XDR device data 30 d; a vendor's 'earliest access date' is routinely months earlier than its notice, so the export is the only copy you will have."
+    how: "Export to a case folder with a hash manifest. Ask the vendor's IR firm for its report and send the vendor a litigation-hold letter on day one so their logs are preserved too."
+    body: |-
+      # Entra sign-ins and directory audit (Microsoft Graph PowerShell)
+      Get-MgAuditLogSignIn -Filter "createdDateTime ge <window start>T00:00:00Z" -All |
+        Where-Object { $_.HomeTenantId -eq '<vendor tenant id>' -or $_.AppId -eq '<vendor app id>' } |
+        Export-Csv vendor-signins.csv -NoTypeInformation
+      Get-MgAuditLogDirectoryAudit -Filter "activityDateTime ge <window start>T00:00:00Z" -All | Export-Csv directory-audit.csv -NoTypeInformation
+      # Unified audit log (Exchange Online PowerShell): what the vendor's accounts and app touched in M365
+      Search-UnifiedAuditLog -StartDate <window start> -EndDate (Get-Date) -UserIds <vendor accounts> -ResultSize 5000 -SessionCommand ReturnLargeSet | Export-Csv ual-vendor.csv -NoTypeInformation
+      # Device timeline for every host in scope (Defender XDR API, 30 d)
+      GET https://api.security.microsoft.com/api/machines/<machine id>/alerts
+      Get-ChildItem <case folder> -File | Get-FileHash -Algorithm SHA256 | Export-Csv manifest.csv -NoTypeInformation
+    attack:
+      - "T1199"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+60–120 · Cut"
+    name: "Cut the vendor's cloud access — each path with its own primitive"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Update-MgServicePrincipal cuts the app and nothing else. An MSP reaches you through a GDAP or DAP relationship, Lighthouse delegations and guests, each with its own switch; a path left open while another is cut tells the attacker they have been found."
+    how: "GDAP and DAP: Microsoft 365 admin center › Settings › Partner relationships › select the partner › Remove roles. That ends the relationship from your side; the partner sees it terminated in Partner Center. Cross-tenant access settings govern guests and direct connect only — they do not apply to GDAP sign-ins, which is why the relationship itself has to go. Non-Microsoft OAuth (a vendor app authorised in Salesforce, Google Workspace, Slack, GitHub): revoke it in that platform — Salesforce Setup › Connected Apps OAuth Usage › Block — the Entra cut does not reach it. Ban the vendor's app in Defender for Cloud Apps › OAuth apps as well, so re-consent is blocked."
+    body: |-
+      # Vendor service principal: disable, then strip what it was granted. Issued access tokens stay valid up to ~1 h.
+      Update-MgServicePrincipal -ServicePrincipalId <sp object id> -AccountEnabled:$false
+      Get-MgServicePrincipalOauth2PermissionGrant -ServicePrincipalId <sp object id> |
+        ForEach-Object { Remove-MgOauth2PermissionGrant -OAuth2PermissionGrantId $_.Id }
+      Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId <sp object id> |
+        ForEach-Object { Remove-MgServicePrincipalAppRoleAssignment -ServicePrincipalId <sp object id> -AppRoleAssignmentId $_.Id }
+      # Credentials: only when AppOwnerTenantId (stage 2) is OUR tenant does the secret live on an object we control.
+      # A multi-tenant vendor app's secret is on the app object in the vendor's tenant: you cannot rotate it.
+      # Send the vendor the ServicePrincipalCredentialKeyId from stage 3 and get written confirmation it was rotated.
+      Remove-MgServicePrincipalPassword -ServicePrincipalId <sp object id> -KeyId <key id>    # our-tenant app only
+      # Guests: disable first, then revoke (revoke alone leaves access tokens valid until they expire)
+      Update-MgUser -UserId <guest object id> -AccountEnabled:$false
+      Revoke-MgUserSignInSession -UserId <guest object id>
+      # Cross-tenant access settings: block the partner tenant inbound (B2B collaboration; not GDAP)
+      New-MgPolicyCrossTenantAccessPolicyPartner -TenantId <vendor tenant id> -B2BCollaborationInbound @{
+        usersAndGroups = @{ accessType = "blocked"; targets = @(@{ target = "AllUsers"; targetType = "user" }) }
+        applications   = @{ accessType = "blocked"; targets = @(@{ target = "AllApplications"; targetType = "application" }) } }
+      # Azure Lighthouse: per delegated subscription
+      az account set -s <subscription id>
+      az managedservices assignment list
+      az managedservices assignment delete --assignment <assignment id>
+    attack:
+      - "T1199"
+      - "T1078.004"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+60–120 · Cut"
+    name: "Block the payload, the stolen certificate and the update channel fleet-wide"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a tenant-wide indicator stops it on every device, including the ones your hunt hasn't found yet. Block the sideloaded payload's hash, not only the installer's; block the certificate so a re-signed variant is stopped too; and block the vendor's update host until the vendor confirms a clean release, because the update channel is the delivery path."
+    how: "Settings › Endpoints › Indicators: File hashes, Certificates (upload the.CER or.PEM, or the thumbprint via the API) and URLs/Domains. IP indicators take single IPs only: block the vendor's ranges at the firewall or VPN instead. Server-side update compromises (the vendor's build or update server) also need the vendor's service accounts rotated on their side; ask for it in writing."
+    body: |-
+      POST https://api.security.microsoft.com/api/indicators    # one call per indicator
+      {"indicatorValue": "<sha256 of sideloaded dll>", "indicatorType": "FileSha256", "action": "BlockAndRemediate",
+       "title": "IR <case>: <vendor> payload", "severity": "High", "description": "Supply-chain incident <case>"}
+      {"indicatorValue": "<certificate thumbprint>", "indicatorType": "CertificateThumbprint", "action": "Block",
+       "title": "IR <case>: <vendor> stolen signing certificate", "description": "Supply-chain incident <case>"}
+      {"indicatorValue": "<update host>", "indicatorType": "DomainName", "action": "Block",
+       "title": "IR <case>: <vendor> update channel until a clean release is confirmed", "description": "Supply-chain incident <case>"}
+    attack:
+      - "T1553.002"
+      - "T1195.002"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+60–120 · Cut"
+    name: "Isolate every device where the package or vendor tooling ran — in one pass"
+    tier: "destructive"
+    tier_inferred: false
+    why: "isolating one device at a time tells the attacker they're found while the others still work; the device list comes from the install, signing and access hunts above."
+    how: "Live Response keeps working on an isolated device, so collection continues."
+    body: |-
+      $ids | ForEach-Object {
+        Invoke-RestMethod -Method Post -Headers $h -ContentType 'application/json' `
+          -Uri "https://api.security.microsoft.com/api/machines/$_/isolate" `
+          -Body '{"Comment": "IR <case>: supply chain", "IsolationType": "Full"}'
+      }
+    attack:
+      - "T1195.002"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+60–120 · Collect"
+    name: "Memory and persistence first, then the file"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a host that is still running the payload holds its unpacked code, its C2 and the stolen tokens in memory; stopping it first destroys that, and the rebuild destroys everything else. Collect, then stop and quarantine, then rebuild."
+    how: "Upload the tools to the Live Response library once (Settings › Endpoints › Response › Library). Windows memory: Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d. Windows persistence: Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df (read-only; -Zip for chain of custody, -CompareTo against a clean build's snapshot). Linux runners and hosts: get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67 (cron, systemd, SSH keys, PAM, ld.so.preload, SUID, package verification, --compare-to ). Then Device page › Collect investigation package, and File page › Stop and quarantine file (up to 1000 devices)."
+    body: |-
+      # Live Response on the isolated device
+      putfile MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      run MagnetRESPONSEv172_Self_Extracting_Archive.exe      # elevated; RAM, pagefile, running processes, triage files
+      putfile Get-PersistenceSnapshot.ps1
+      run Get-PersistenceSnapshot.ps1 -parameters "-Zip"
+      getfile "<snapshot zip path from the script output>"
+      getfile "<path to package folder, vendor binary or sideloaded dll>"
+      # Linux host or runner (Live Response on Linux, or your SSH): run read-only, hash, then pull
+      run get-persistence-snapshot.sh
+    attack:
+      - "T1547"
+      - "T1053.005"
+  - platform: "Defender XDR / Sentinel"
+    label: "After the gate · Scoped"
+    name: "Release a device only after it is rebuilt and the gate is met"
+    tier: "write"
+    tier_inferred: true
+    why: "releasing is the one surgical, per-device action here — each device comes back once it is rebuilt and the eradication gate is confirmed."
+    how: "Device page › Release from isolation."
+    body: |-
+      POST https://api.security.microsoft.com/api/machines/{id}/unisolate
+      {"Comment": "IR <case>: rebuilt, eradication gate confirmed"}
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "T+15–60 · Export"
+    name: "Export the identity evidence before it ages out"
+    tier: "read"
+    tier_inferred: false
+    why: "Falcon's Entra connector holds what your Next-Gen SIEM retention keeps; the Entra portal keeps 30 d on P1/P2 and 7 d free, the unified audit log 180 d Standard and 1 y Premium; the vendor's real earliest-access date is usually months before its notice."
+    how: "Export the stage 2, 3 and 5 results from Advanced Event Search (CSV) to a hashed case folder, and run the Graph and Exchange Online exports on the Defender tab for the sources Falcon does not ingest. Litigation-hold letter to the vendor on day one."
+    body: ""
+    attack:
+      - "T1199"
+  - platform: "CrowdStrike Falcon"
+    label: "T+60–120 · Cut"
+    name: "Cut the vendor's cloud access (Entra, Partner Center, Lighthouse, SaaS)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the vendor's app, secrets, guests, GDAP relationship and Lighthouse delegations live outside Falcon; they are cut in the same pass as the hosts."
+    how: "Not a Falcon action: terminate the GDAP relationship (Microsoft 365 admin center › Partner relationships › Remove roles), remove Lighthouse assignments, block the partner tenant inbound, disable the service principal and revoke guest sessions with the commands on the Defender tab. Non-Microsoft OAuth grants are revoked in each SaaS platform."
+    body: ""
+    attack:
+      - "T1199"
+  - platform: "CrowdStrike Falcon"
+    label: "T+60–120 · Cut"
+    name: "Block the payload and the sideloaded library on every host (custom IOC)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a globally applied prevent IOC stops the binary everywhere, including hosts the hunt hasn't surfaced. Falcon IOC management has no certificate type: block every hash the certificate hunt returned, and block the vendor's update host at the proxy or DNS until a clean release is confirmed."
+    how: "Endpoint security › IOC management › Add indicator: type sha256, action prevent, all hosts. Domains and IPs accept only detect or no_action, so the update host and the vendor's ranges are blocked at the firewall, proxy or DNS."
+    body: |-
+      POST /iocs/entities/indicators/v1
+      {"indicators": [
+        {"type": "sha256", "value": "<sha256 of installer>", "action": "prevent", "platforms": ["windows", "mac", "linux"], "applied_globally": true, "severity": "high", "description": "IR <case>: trojanised <vendor> installer"},
+        {"type": "sha256", "value": "<sha256 of payload dll>", "action": "prevent", "platforms": ["windows"], "applied_globally": true, "severity": "high", "description": "IR <case>: <vendor> sideloaded payload"}
+      ]}
+    attack:
+      - "T1195.002"
+  - platform: "CrowdStrike Falcon"
+    label: "T+60–120 · Cut"
+    name: "Contain every host and runner in scope in one call"
+    tier: "destructive"
+    tier_inferred: false
+    why: "one call with every AID from the hunts cuts them together; containing one host at a time warns the attacker while the rest still work."
+    how: "Host management › select the hosts › Network contain. RTR keeps working on a contained host."
+    body: |-
+      POST /devices/entities/devices-actions/v2?action_name=contain
+      {"ids": ["<AID 1>", "<AID 2>", "<AID 3>"]}
+    attack:
+      - "T1195.002"
+  - platform: "CrowdStrike Falcon"
+    label: "T+60–120 · Collect"
+    name: "Memory and persistence first, then the file, then kill (RTR)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a host still running the payload holds its unpacked code, C2 and stolen tokens in memory; kill first destroys that and the rebuild destroys the rest. Deleting files is not remediation: the host is rebuilt from clean."
+    how: "Put the tools on the host with put (upload them once to Host setup and management › Response scripts and files). Windows memory: Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d. Windows persistence: Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df. Linux runners and hosts: get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67."
+    body: |-
+      put MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      runscript -Raw=```Start-Process .\MagnetRESPONSEv172_Self_Extracting_Archive.exe -Wait```
+      put Get-PersistenceSnapshot.ps1
+      runscript -Raw=```.\Get-PersistenceSnapshot.ps1 -Zip```
+      get <snapshot zip path from the script output>
+      get <path to package folder, vendor binary or sideloaded dll>
+      # Linux
+      put get-persistence-snapshot.sh
+      runscript -Raw=```bash ./get-persistence-snapshot.sh```
+      ps
+      kill <pid>
+    attack:
+      - "T1547"
+      - "T1053.005"
+  - platform: "CrowdStrike Falcon"
+    label: "After the gate · Scoped"
+    name: "Lift containment per host only after rebuild and the gate"
+    tier: "write"
+    tier_inferred: true
+    why: "lifting is the surgical step; each host comes back once it is rebuilt and the eradication gate is confirmed."
+    how: null
+    body: |-
+      POST /devices/entities/devices-actions/v2?action_name=lift_containment
+      {"ids": ["<AID>"]}
+    attack: []
+  - platform: "SentinelOne"
+    label: "T+15–60 · Export"
+    name: "Export the identity evidence before it ages out"
+    tier: "read"
+    tier_inferred: false
+    why: "SentinelOne holds endpoint data for the retention you bought; the Entra portal keeps 30 d on P1/P2 and 7 d free, the unified audit log 180 d Standard and 1 y Premium; the vendor's real earliest-access date is usually months before its notice."
+    how: "Export the Event Search results (CSV) to a hashed case folder and run the Graph and Exchange Online exports on the Defender tab for the sources SentinelOne does not hold. Litigation-hold letter to the vendor on day one."
+    body: ""
+    attack:
+      - "T1199"
+  - platform: "SentinelOne"
+    label: "T+60–120 · Cut"
+    name: "Cut the vendor's cloud access (Entra, Partner Center, Lighthouse, SaaS)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the vendor's app, secrets, guests, GDAP relationship and Lighthouse delegations live outside SentinelOne; they are cut in the same pass as the hosts."
+    how: "Not a SentinelOne action: terminate the GDAP relationship (Microsoft 365 admin center › Partner relationships › Remove roles), remove Lighthouse assignments, block the partner tenant inbound, disable the service principal and revoke guest sessions with the commands on the Defender tab. Non-Microsoft OAuth grants are revoked in each SaaS platform."
+    body: ""
+    attack:
+      - "T1199"
+  - platform: "SentinelOne"
+    label: "T+60–120 · Cut"
+    name: "Blocklist the payload and the sideloaded library tenant-wide, and block the vendor's ranges and update host"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a tenant-scope blocklist entry stops the file executing on every agent; a Firewall Control rule cuts the vendor's network path and its update host on endpoints. The blocklist takes hashes, not certificates: add every hash the certificate hunt returned."
+    how: "Blocklist › Add, scope tenant (the value field takes the SHA1). For the vendor's ranges and update host: a Firewall Control rule denying <vendor cidr> and <update host> (agents with Firewall Control enabled), POST /web/api/v2.1/firewall-control."
+    body: |-
+      POST /web/api/v2.1/restrictions
+      {"filter": {"tenant": true},
+       "data": {"type": "black_hash", "value": "<sha1 of payload dll>", "osType": "windows",
+                "description": "IR <case>: <vendor> sideloaded payload"}}
+    attack:
+      - "T1195.002"
+  - platform: "SentinelOne"
+    label: "T+60–120 · Cut"
+    name: "Disconnect every agent in scope from the network in one call"
+    tier: "write"
+    tier_inferred: true
+    why: "one call over every agent from the hunts cuts them together; the management connection stays up, so collection continues."
+    how: "Endpoint › Actions › Disconnect from network, or select several endpoints and apply the action to all."
+    body: |-
+      POST /web/api/v2.1/agents/actions/disconnect
+      {"filter": {"ids": ["<agent id 1>", "<agent id 2>"]}, "data": {}}
+    attack:
+      - "T1195.002"
+  - platform: "SentinelOne"
+    label: "T+60–120 · Collect"
+    name: "Memory and persistence first, then the files, then kill and quarantine"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a host still running the payload holds its unpacked code, C2 and stolen tokens in memory; kill first destroys that and the rebuild destroys the rest. Kill and quarantine stop it running and nothing more: the host is rebuilt from clean."
+    how: "RemoteOps › Run Script with the tools uploaded to the script library once. Windows memory: Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d. Windows persistence: Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df with -Zip. Linux runners and hosts: get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67. Then Fetch Files: the snapshot zip, the package folder, the vendor binary and the sideloaded library, shell history. Then Threat › Mitigation: Kill, Quarantine."
+    body: ""
+    attack:
+      - "T1547"
+      - "T1053.005"
+  - platform: "SentinelOne"
+    label: "After the gate · Scoped"
+    name: "Reconnect per endpoint only after rebuild and the gate"
+    tier: "write"
+    tier_inferred: true
+    why: "reconnecting is the surgical step; each endpoint comes back once it is rebuilt and the eradication gate is confirmed."
+    how: "Endpoint › Actions › Reconnect to network."
+    body: ""
+    attack: []
+  - platform: "Velociraptor"
+    label: "T+15–60 · Export"
+    name: "Export the identity evidence before it ages out"
+    tier: "write"
+    tier_inferred: true
+    why: "Velociraptor keeps what you collect; the Entra portal keeps 30 d on P1/P2 and 7 d free, the unified audit log 180 d Standard and 1 y Premium, CloudTrail event history 90 d; the vendor's real earliest-access date is usually months before its notice."
+    how: "Run the Graph, Exchange Online and CloudTrail exports from the Defender and Splunk tabs into a hashed case folder. Litigation-hold letter to the vendor on day one."
+    body: ""
+    attack:
+      - "T1199"
+  - platform: "Velociraptor"
+    label: "T+60–120 · Cut"
+    name: "Cut the vendor's cloud access (Entra, Partner Center, Lighthouse, SaaS)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the vendor's app, secrets, guests, GDAP relationship and Lighthouse delegations live outside Velociraptor; they are cut in the same pass as the hosts."
+    how: "Not a Velociraptor action: terminate the GDAP relationship (Microsoft 365 admin center › Partner relationships › Remove roles), remove Lighthouse assignments, block the partner tenant inbound, disable the service principal and revoke guest sessions with the commands on the Defender tab. Non-Microsoft OAuth grants are revoked in each SaaS platform."
+    body: ""
+    attack:
+      - "T1199"
+  - platform: "Velociraptor"
+    label: "T+60–120 · Cut"
+    name: "Label every client in scope, then quarantine them in one hunt"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a hunt limited to a label reaches every labelled client together, instead of one collection per host."
+    how: "Label Windows and Linux clients separately and start one hunt per label: Windows.Remediation.Quarantine for Windows, Linux.Remediation.Quarantine (nftables) for Linux. The Velociraptor connection stays up. Velociraptor has no hash or certificate block: those land in your EDR or AppLocker/WDAC, and the update host at the proxy or DNS."
+    body: |-
+      SELECT label(client_id=client_id, labels=['sc-win'], op='set')
+      FROM clients() WHERE client_id IN ('C.<id 1>', 'C.<id 2>')
+
+      SELECT hunt(description='IR <case>: quarantine',
+                  artifacts=['Windows.Remediation.Quarantine'],
+                  include_labels=['sc-win'])
+      FROM scope()
+    attack:
+      - "T1195.002"
+  - platform: "Velociraptor"
+    label: "T+60–120 · Collect"
+    name: "Memory and persistence first, then the package, the binary and what was run"
+    tier: "write"
+    tier_inferred: false
+    why: "evidence comes off the host before anything is stopped; the rebuild destroys it, and a host still running the payload holds its unpacked code and stolen tokens only in memory."
+    how: "Windows memory: Windows.Memory.Acquisition, or Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d pushed by your EDR or run from removable media. Persistence: paste the body of Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df into Windows.System.PowerShell's Command (with -Zip ), and of get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67 into Linux.Sys.BashShell's Command on runners and hosts; both are read-only. Then Windows.Search.FileFinder / Linux.Search.FileFinder with Upload_File = Y for the snapshot zip, the package folder, the vendor binary and the sideloaded library; Linux.Sys.BashHistory for what was installed and run."
+    body: ""
+    attack:
+      - "T1547"
+      - "T1053.005"
+  - platform: "Velociraptor"
+    label: "T+60–120 · Stop"
+    name: "Stop execution"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stopping the process is all this does — deleting the package folder removes what you know about, not what it dropped; the host is rebuilt from clean."
+    how: "Windows.System.PowerShell on Windows, Linux.Sys.BashShell on Linux, with:"
+    body: |-
+      Stop-Process -Id <pid> -Force
+      kill -9 <pid>
+    attack:
+      - "T1195.002"
+  - platform: "Velociraptor"
+    label: "After the gate · Scoped"
+    name: "Lift quarantine per client only after rebuild and the gate"
+    tier: "destructive"
+    tier_inferred: false
+    why: "lifting is the surgical step; each client comes back once it is rebuilt and the eradication gate is confirmed."
+    how: "Re-run the quarantine artifact on that client with RemovePolicy = true."
+    body: ""
+    attack: []
+  - platform: "Splunk"
+    label: "T+15–60 · Export"
+    name: "Pin the evidence to a case index before the window rolls"
+    tier: "write"
+    tier_inferred: false
+    why: "Splunk keeps what the index retention says, and the sources behind it keep less: the Entra portal 30 d on P1/P2 and 7 d free, the unified audit log 180 d Standard and 1 y Premium, CloudTrail event history 90 d. A vendor's real earliest-access date is usually months before its notice, so re-run every hunt from that date and keep the results somewhere the rollover cannot reach."
+    how: "Create an index with long retention for the case, write each hunt's results into it, and export the same results to a hashed case folder. Run the Graph and Exchange Online exports on the Defender tab for the sources Splunk does not ingest. Litigation-hold letter to the vendor on day one."
+    body: "<each hunt above> | collect index=ir_<case> marker=\"hunt=stage2-vendor-identities\""
+    attack:
+      - "T1199"
+  - platform: "Splunk"
+    label: "T+60–120 · Cut"
+    name: "Act from the EDR, Entra and the admin centres, not from Splunk"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Splunk is where you hunt; the cut has to land on the endpoints, the identity plane and the partner relationships in one pass."
+    how: "Terminate the GDAP relationship, remove Lighthouse assignments, block the partner tenant inbound, disable the vendor app and revoke guest sessions (Defender tab); block the hashes and the certificate fleet-wide and isolate every host in scope with your EDR (see its tab). With Splunk SOAR, the EDR's block and isolate actions run from the playbook — pass the full host list from the hunts, not one host."
+    body: ""
+    attack:
+      - "T1199"
+  - platform: "Splunk"
+    label: "T+60–120 · Collect"
+    name: "Memory and persistence first, through the EDR or by hand"
+    tier: "write"
+    tier_inferred: false
+    why: "a host still running the payload holds its unpacked code, C2 and stolen tokens in memory; the rebuild destroys everything else."
+    how: "Windows memory: Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d, pushed with your EDR or run elevated from removable media. Windows persistence: Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df with -Zip. Linux runners and hosts: get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67. Index the snapshot JSON into the case index so the diff against a clean build is a search."
+    body: ""
+    attack:
+      - "T1547"
+      - "T1053.005"
+  - platform: "Elastic / Wazuh"
+    label: "T+15–60 · Export"
+    name: "Pin the evidence before ILM rolls it"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Elastic keeps what the ILM policy says, and the sources behind it keep less: the Entra portal 30 d on P1/P2 and 7 d free, the unified audit log 180 d Standard and 1 y Premium, CloudTrail event history 90 d. A vendor's real earliest-access date is usually months before its notice."
+    how: "Snapshot the indices in scope to a repository with no delete phase, export each hunt's results to a hashed case folder, and run the Graph and Exchange Online exports on the Defender tab for the sources Elastic does not ingest. Litigation-hold letter to the vendor on day one."
+    body: |-
+      PUT _snapshot/<repo>/ir-<case>-<date>
+      {"indices": "logs-azure.signinlogs-*,logs-azure.auditlogs-*,logs-aws.cloudtrail-*,logs-endpoint.events.*", "include_global_state": false}
+    attack:
+      - "T1199"
+  - platform: "Elastic / Wazuh"
+    label: "T+60–120 · Cut"
+    name: "Cut the vendor's cloud access (Entra, Partner Center, Lighthouse, SaaS)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the vendor's app, secrets, guests, GDAP relationship and Lighthouse delegations live outside Elastic; they are cut in the same pass as the hosts."
+    how: "Not an Elastic action: terminate the GDAP relationship (Microsoft 365 admin center › Partner relationships › Remove roles), remove Lighthouse assignments, block the partner tenant inbound, disable the service principal and revoke guest sessions with the commands on the Defender tab. Non-Microsoft OAuth grants are revoked in each SaaS platform."
+    body: ""
+    attack:
+      - "T1199"
+  - platform: "Elastic / Wazuh"
+    label: "T+60–120 · Cut"
+    name: "Blocklist the payload by hash and the stolen certificate by signer"
+    tier: "write"
+    tier_inferred: true
+    why: "a blocklist entry stops the file executing on every Elastic Defend host, including ones the hunt hasn't surfaced. A hash entry misses a re-signed variant; the Windows signer entry stops everything signed with the stolen certificate, and the vendor's update host is blocked at the proxy or DNS until a clean release is confirmed."
+    how: "Elastic Defend: Blocklist page (or Artifacts › Blocklist, by version) › Add blocklist entry: one entry with the hashes of the installer and the sideloaded payload, and a Windows entry with the signer name."
+    body: ""
+    attack:
+      - "T1553.002"
+      - "T1195.002"
+  - platform: "Elastic / Wazuh"
+    label: "T+60–120 · Cut"
+    name: "Isolate every host in scope in one request"
+    tier: "destructive"
+    tier_inferred: false
+    why: "one request with every endpoint from the hunts cuts them together; isolating one host at a time warns the attacker."
+    how: "Wazuh: isolation is an active-response script run through PUT /active-response, and Wazuh ships none — write and test one before you need it."
+    body: |-
+      POST /api/endpoint/action/isolate
+      {"comment": "IR <case>: supply chain",
+       "endpoint_ids": ["<endpoint id 1>", "<endpoint id 2>"]}
+    attack:
+      - "T1195.002"
+  - platform: "Elastic / Wazuh"
+    label: "T+60–120 · Collect"
+    name: "Memory and persistence first, then the file, then kill (response console)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a host still running the payload holds its unpacked code, C2 and stolen tokens in memory; kill first destroys that and the rebuild destroys the rest. kill-process stops it running and nothing more: the host is rebuilt from clean."
+    how: "Windows memory: Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d. Windows persistence: Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df. Linux runners and hosts: get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67."
+    body: |-
+      upload --file MagnetRESPONSEv172_Self_Extracting_Archive.exe          # the response shows where it landed
+      execute --command "<uploaded path>\MagnetRESPONSEv172_Self_Extracting_Archive.exe" --timeout 30m
+      upload --file Get-PersistenceSnapshot.ps1
+      execute --command "powershell -ExecutionPolicy Bypass -File <uploaded path>\Get-PersistenceSnapshot.ps1 -Zip"
+      get-file --path "<snapshot zip path from the script output>"
+      get-file --path "<path to package folder, vendor binary or sideloaded dll>"
+      # Linux
+      upload --file get-persistence-snapshot.sh
+      execute --command "bash <uploaded path>/get-persistence-snapshot.sh"
+      processes
+      kill-process --pid <pid>
+    attack:
+      - "T1547"
+      - "T1053.005"
+  - platform: "Elastic / Wazuh"
+    label: "After the gate · Scoped"
+    name: "Release per host only after rebuild and the gate"
+    tier: "write"
+    tier_inferred: true
+    why: "releasing is the surgical step; each host comes back once it is rebuilt and the eradication gate is confirmed."
+    how: null
+    body: "release --comment \"IR <case>: rebuilt, eradication gate confirmed\""
+    attack: []

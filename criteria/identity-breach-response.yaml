@@ -1,0 +1,1895 @@
+# Source of truth for this playbook's IR criteria.
+# Hand-edit freely. Re-run 'bun run build:index' after any change.
+playbook: "identity-breach-response"
+title: "Identity Breach Response"
+platforms:
+  - "Defender XDR / Sentinel"
+  - "CrowdStrike Falcon"
+  - "SentinelOne"
+  - "Velociraptor"
+  - "Splunk"
+  - "Elastic / Wazuh"
+scenarios:
+  - id: "1"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Standard Account Takeover (credential reuse, infostealer log, password spray)"
+    indicators: "successful sign-in from an atypical IP with AuthenticationRequirement singleFactorAuthentication and no AiTM artefacts. No MFA prompt means MFA was not required for that app, location or user (a Conditional Access gap or exclusion), or the user approved a push; a TOTP code cannot be replayed without a prompt. Basic authentication for EWS, POP, IMAP, ActiveSync and remote PowerShell has been off in Exchange Online since 2022–23; the one legacy path still subject to a retirement timeline is SMTP AUTH client submission, so check Get-CASMailbox <upn> | fl SmtpClientAuthenticationDisabled and Get-TransportConfig | fl SmtpClientAuthenticationDisabled before blaming \"legacy protocols\"."
+    discriminator: "Follow the universal timeline. Add: block the source IP in a Conditional Access named location (break-glass excluded) and close the MFA gap that let a password alone through. Hunt for the same IP across all users in the tenant — password spray is rarely a single-user event — and check the user's credentials against infostealer-log feeds; a stealer log means the device is in scope too."
+    attack: []
+    window: null
+  - id: "2"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "AiTM Proxy Phishing (Evilginx, Tycoon 2FA, Cloudflare Worker)"
+    indicators: "successful sign-in WITH MFA passed but from atypical device fingerprint, often from a residential proxy IP. Session cookie was harvested mid-auth."
+    discriminator: "Token revocation is the only meaningful containment — the credential itself wasn't useful to the attacker, the cookie was. After eradication, accelerate FIDO2 rollout for the affected role — origin binding makes the proxy class structurally impossible."
+    attack: []
+    window: null
+  - id: "3"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Device-Code Phishing (Storm-2372, EvilTokens, FlowerStorm)"
+    indicators: "authenticationProtocol = \"deviceCode\" in Entra sign-in logs, often successful with no MFA challenge (victim's session satisfied IdP), attacker's device immediately requests tokens."
+    discriminator: "Containment is identical — revoke sessions, kill device registrations, audit OAuth grants. Critical posture fix during T+4–24h: add Conditional Access policy restricting Device Authorization Grant flow to apps/users with legitimate need. Block entirely for privileged roles. The Conditional Access policy needs Entra ID P1; on Entra ID Free, use the Security Defaults device-code block instead. Response checklist: Device Code Abuse Response (12 steps). Detection and prevention: Device Code Abuse — 8 Sentinel hunts (including IP-divergence detection that catches the attacker's token use after the victim's auth) and the step-by-step CA policy build with Report-only rollout."
+    attack: []
+    window: null
+  - id: "4"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "OAuth Consent Abuse (rogue app granted permissions)"
+    indicators: "a new Enterprise App in Entra with broad scopes ( Mail.Read, Files.ReadWrite.All, offline_access ) consented by a regular user; access continues despite password reset."
+    discriminator: "Revoking the user's sessions and resetting the password is insufficient — the app holds its own refresh token. The app registration lives in the attacker's tenant and you cannot delete it; what is in your tenant is the service principal (the Enterprise App). Disable it first ( Update-MgServicePrincipal -AccountEnabled:$false ), which stops token issuance for every user who consented, export its grants and app-role assignments, remove them ( Remove-MgOauth2PermissionGrant, Remove-MgServicePrincipalAppRoleAssignedTo ), then delete the SP ( Remove-MgServicePrincipal ). Deleting first destroys the grant records. Check whether the same app id was consented by anyone else ( Get-MgServicePrincipalOauth2PermissionGrant ). After eradication: restrict user consent to verified publishers and low-impact scopes, require admin consent for the rest, and alert on \"Consent to application\"."
+    attack: []
+    window: null
+  - id: "5"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Refresh-Token / PRT Persistence (post-password-reset re-entry)"
+    indicators: "user reports their account \"keeps getting taken over\" despite password resets; sign-in logs show interactive token use with no fresh authentication; unexpected device in registered devices list."
+    discriminator: "The previous IR was incomplete — the account was revoked before it was disabled, the registered device wasn't removed, or a FOCI refresh token kept minting tokens for Office, Teams and Outlook from the attacker's machine. Re-run the full T+0–15 playbook in order (disable, revoke, devices, grants, export), and run the Stage 2 and Stage 9 hunts for IncomingTokenType == \"primaryRefreshToken\" from an unmanaged device and for the FOCI app ids from the attacker IP. Refresh-token lifetime cannot be reduced: those policies were retired in 2021 and the 90-day inactivity window is fixed. The levers are Conditional Access sign-in frequency for the user's apps, persistent browser session off, and Token Protection so the next stolen token is bound to the device it was issued to."
+    attack: []
+    window: null
+  - id: "6"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Non-Human Identity Compromise (API key, service principal, NHI)"
+    indicators: "API key from CI/CD, package registry, AI platform (OpenAI/Anthropic), or cloud provider (AWS/Azure/GCP) appears in an infostealer log, paste site, or public GitHub repo. Or: anomalous activity from a service principal — new ASN, off-hours, unusual data volume."
+    discriminator: "No user to \"reset\" and no sessions to revoke: app-only tokens are minted from the credential, not from a refresh token, so Revoke-MgUserSignInSession has nothing to act on. Identify the named owner from your NHI inventory. Disable the service principal ( Update-MgServicePrincipal -AccountEnabled:$false ) so no new tokens are issued, remove every secret and certificate ( Remove-MgServicePrincipalPassword, Remove-MgServicePrincipalKey; on the app object Remove-MgApplicationPassword, Remove-MgApplicationKey ), then issue new ones and re-enable; an access token already issued lives out its 60–90 minutes. Audit AADServicePrincipalSignInLogs and MicrosoftGraphActivityLogs for the SP's calls by IP. If no inventory exists, the key may be orphaned — coordinate with engineering to identify systems calling it before the disable breaks production. After eradication: enforce a rotation policy (&le; 12 months for SP secrets, &le; 6 months for API keys), prefer workload identity federation or managed identities over secrets, and assign a named owner per credential."
+    attack: []
+    window: null
+  - id: "7"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Privileged Account Compromise (Global Admin, Subscription Owner)"
+    indicators: "any sign-in to an account holding Global Administrator, Privileged Role Administrator, Application Administrator, or cloud-subscription Owner role from an unexpected context."
+    discriminator: "Tenant-wide incident, not a user incident. Assume the attacker has tenant takeover capability and has already placed a back door that survives every per-user action. Containment escalates: disable then revoke every privileged identity (break-glass accounts excluded and their passwords rotated by hand), then audit the window for the doors that outlive a user: federation ( Get-MgDomain | fl Id, AuthenticationType and Get-MgDomainFederationConfiguration: a new federated domain or a changed signing certificate is a golden-SAML persistence), pass-through authentication agents (a rogue PTA agent sees every password; list them in Entra Connect health and Get-MgBetaOnPremisesPublishingProfileAgent ), the Entra Connect server itself (its sync account holds directory write rights; treat the server as tier 0 and in scope), GDAP and DAP partner relationships (Entra › Delegated admin partners; \"Add partner to company\" in the audit log), Conditional Access as a diff, not a glance ( Get-MgIdentityConditionalAccessPolicy -All | ConvertTo-Json -Depth 10 against last week's export; look for new exclusions, named locations and report-only flips), the UAL ingestion switch ( Get-AdminAuditLogConfig | fl UnifiedAuditLogIngestionEnabled and \"Set-AdminAuditLogConfig\" in the admin audit), transport rules and inbound connectors ( Get-TransportRule, Get-InboundConnector, changed in the window), newly created accounts with roles, and credentials added to existing privileged apps (Hour 1–4). Engage external IR if available. Notify the regulator: this is often a reportable major incident under NIS2."
+    attack: []
+    window: null
+  - id: "8"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Vendor / Third-Party Identity Exposure (their breach, your problem)"
+    indicators: "a vendor whose employees have access to your tenant via guest/B2B identity is breached; or vendor employees' credentials appear in an infostealer log with shared-app access to your environment."
+    discriminator: "You don't control their identity store, so you can't revoke at the source: refresh tokens for a B2B user are not revoked in your tenant, only in their home tenant (Microsoft identity platform, refresh tokens). What you control is your side of the trust. Block the guest objects ( Update-MgUser -AccountEnabled:$false works on them), then use cross-tenant access settings (Entra › External Identities › Cross-tenant access settings): add the vendor's tenant as an organisation and set inbound B2B collaboration to blocked, or stop trusting their MFA and device claims so your Conditional Access re-challenges them. Scope the exposure by their tenant, not by user: in sign-in logs HomeTenantId == \"<vendor tenant id>\" and CrossTenantAccessType!= \"none\" lists every vendor identity that touched you; in Get-MgServicePrincipal, AppOwnerOrganizationId equal to their tenant id lists every app of theirs that holds grants here. Restrict their app access to read-only during validation and contact their security team with specific exposure data (not generic \"improve your security\"). See Vendor Breach Response for the full vendor-IR workflow."
+    attack: []
+    window: null
+criteria:
+  - id: "identity-breach-response/defender/s1-successful-sign-ins-for-the-account-interactive"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · First sign-in"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Successful sign-ins for the account, interactive and non-interactive, earliest first per IP and client"
+    why: "The first successful sign-in from an attacker IP is the start of the exposure window; every later hunt and any breach notification is dated from it. Refresh-token replay and device-code redemptions are logged as non-interactive sign-ins, so SigninLogs alone misses the token use that follows the phish."
+    how: null
+    fp: "The user's own VPN egress, a new office and Microsoft service IPs all appear as \"new\" sources; rank by ASN and first-seen, not by count, and compare against the 30 days before the window."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d)        // 30 d on P1/P2, 7 d on Free; longer only in Log Analytics
+      | where UserPrincipalName =~ "<upn>" and ResultType == "0"
+      | extend Kind = iff(Type == "SigninLogs", "interactive", "non-interactive")
+      | summarize FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated), SignIns=count(), Kinds=make_set(Kind)
+          by IPAddress, AutonomousSystemNumber, UserAgent, ClientAppUsed, AppDisplayName, AuthenticationProtocol
+      | order by FirstSeen asc
+      // AuthenticationProtocol == "deviceCode" on the first hit: the window starts at the code redemption, not at a password.
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "identity-breach-response/defender/s2-how-mfa-was-satisfied-prt-from-an-unmanaged-devi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · MFA"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "How MFA was satisfied; PRT from an unmanaged device; one session on two IPs; what Identity Protection flagged"
+    why: "A password reset does not stop a stolen session cookie, a replayed PRT or a device-code token; how MFA was passed decides whether you revoke sessions, remove devices, or also rebuild the victim's PC."
+    how: null
+    fp: "Entra-joined devices mid-enrolment and Windows 365 or AVD session hosts can present a PRT with an empty device id; two IPs on one SessionId is normal for a phone moving between Wi-Fi and cellular within minutes. Weigh ASN and country, not the count. Remote-debugging flags are also set by browser automation and test tooling on developer machines."
+    query: |-
+      // a. How each authentication step was satisfied, from the attacker's IPs
+      SigninLogs
+      | where TimeGenerated > ago(30d)
+      | where UserPrincipalName =~ "<upn>" and ResultType == "0" and IPAddress in ("<ip>")
+      | mv-expand step = parse_json(AuthenticationDetails)
+      | project TimeGenerated, IPAddress, AppDisplayName, AuthenticationProtocol, AuthenticationRequirement,
+                IncomingTokenType, Method=tostring(step.authenticationMethod), Detail=tostring(step.authenticationStepResultDetail)
+      // AuthenticationProtocol == "deviceCode": device-code phishing.
+      // Detail == "MFA requirement satisfied by claim in the token" from a new IP: a replayed session (AiTM or stolen cookie).
+      // b. A primary refresh token presented from a device Entra does not manage: stolen or forged PRT
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d) and UserPrincipalName =~ "<upn>" and IncomingTokenType == "primaryRefreshToken"
+      | extend dd = parse_json(DeviceDetail)
+      | where tostring(dd.isManaged) != "true" or isempty(tostring(dd.deviceId))
+      | project TimeGenerated, IPAddress, AppDisplayName, DeviceId=tostring(dd.deviceId), TrustType=tostring(dd.trustType), SessionId
+      // c. One session id seen from more than one IP: the cookie moved
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d) and UserPrincipalName =~ "<upn>" and isnotempty(SessionId)
+      | summarize IPs=make_set(IPAddress), Sources=dcount(IPAddress), First=min(TimeGenerated), Last=max(TimeGenerated) by SessionId
+      | where Sources > 1
+      // d. What Identity Protection already saw (P2)
+      AADUserRiskEvents
+      | where TimeGenerated > ago(30d) and UserPrincipalName =~ "<upn>"
+      | project TimeGenerated, RiskEventType, RiskLevel, RiskState, Activity, IpAddress
+      // e. Endpoint: Chromium started for remote debugging (cookie theft), on the victim's device
+      DeviceProcessEvents
+      | where Timestamp > ago(30d) and DeviceName =~ "<victim host>"
+      | where FileName in~ ("chrome.exe","msedge.exe") and ProcessCommandLine has "--remote-debugging-port"
+      | project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, ProcessCommandLine
+    tested: null
+    attack:
+      - "T1539"
+      - "T1550.004"
+      - "T1528"
+  - id: "identity-breach-response/defender/s3-mfa-methods-taps-device-registrations-app-consen"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Persistence"
+    stage_ord: 3
+    platform: "Defender XDR / Sentinel"
+    title: "MFA methods, TAPs, device registrations, app consents and credentials, inbox rules, forwarding, delegation, transport rules"
+    why: "Each of these survives a password reset and a session revocation; anything found here has to be removed before the account is handed back. Outlook and OWA log rule changes as UpdateInboxRules (mailbox audit); only PowerShell logs New-InboxRule."
+    how: null
+    fp: "\"User registered security info\" fires on every routine enrolment and on Authenticator re-registration after a phone change; keep hits inside the exposure window and from the attacker's IP or a new country. Helpdesk-issued TAPs are normal; a TAP issued by the compromised account itself, or by an admin from the attacker IP, is not."
+    query: |-
+      // Entra: methods, TAPs, devices, consents, app role assignments, credentials added to apps
+      AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where OperationName in ("User registered security info", "Admin registered security info",
+          "User deleted security info", "Register device", "Add registered owner to device",
+          "Add registered users to device", "Consent to application", "Add delegated permission grant",
+          "Add app role assignment grant to user", "Add app role assignment to service principal",
+          "Add service principal credentials")
+         or OperationName has "Certificates and secrets management"
+      | where tostring(InitiatedBy) has "<upn>" or tostring(TargetResources) has "<upn>"
+      | project TimeGenerated, OperationName, Result, ResultReason, Actor=tostring(InitiatedBy.user.userPrincipalName),
+                ActorIP=tostring(InitiatedBy.user.ipAddress), Target=tostring(TargetResources[0].displayName)
+      | order by TimeGenerated asc
+      // ResultReason has "temporary access pass": a TAP was issued; who issued it and from where, and was it redeemed from the attacker IP?
+      // Exchange: rules, forwarding, delegation, transport rules and connectors
+      OfficeActivity
+      | where TimeGenerated > ago(30d)
+      | where Operation in ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules", "Set-Mailbox",
+          "Add-MailboxPermission", "Add-MailboxFolderPermission", "Add-RecipientPermission",
+          "New-TransportRule", "Set-TransportRule", "New-InboundConnector", "Set-InboundConnector")
+      | where UserId =~ "<upn>" or tostring(Parameters) has "<upn>"
+      | where Operation != "Set-Mailbox" or tostring(Parameters) has_any ("ForwardingSmtpAddress", "ForwardingAddress", "DeliverToMailboxAndForward")
+      | project TimeGenerated, Operation, UserId, ClientIP, Parameters
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1556.006"
+      - "T1098.005"
+      - "T1098.001"
+      - "T1564.008"
+  - id: "identity-breach-response/defender/s4-mail-read-and-files-downloaded-by-client-ip-with"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Data access"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "Mail read and files downloaded, by client IP, with sync-versus-bind, throttling, client string, searches and deletions"
+    why: "What was read or downloaded from the attacker's IP decides whether this is a notifiable data breach and whose data it involves. MailAccessType == \"Sync\" means whole folders were pulled; IsThrottled == \"True\" means the log stopped counting after 1,000 accesses in 24 hours and under-states the read; ClientInfoString names the tool."
+    how: null
+    fp: "The owner's own clients dominate MailItemsAccessed; split by ClientIP first. Outlook in cached mode and mobile mail apps legitimately show Sync, and IsThrottled is also set by the user's own full-mailbox search or a migration. Compare the attacker IP's folder set with the user's usual one."
+    query: |-
+      OfficeActivity
+      | where TimeGenerated > ago(30d) and UserId =~ "<upn>"
+      | where Operation in ("MailItemsAccessed", "FileDownloaded", "FileSyncDownloadedFull", "FileAccessed",
+          "SearchQueryInitiatedExchange", "SearchQueryInitiatedSharePoint", "MoveToDeletedItems", "SoftDelete", "HardDelete")
+      | extend Props = tostring(OperationProperties)
+      | extend MailAccessType = extract(@'MailAccessType\W+Value\W+(\w+)', 1, Props),
+               IsThrottled    = extract(@'IsThrottled\W+Value\W+(\w+)', 1, Props)
+      | summarize Events=count(), First=min(TimeGenerated), Last=max(TimeGenerated),
+          Sync=countif(MailAccessType == "Sync"), Throttled=countif(IsThrottled == "True"),
+          Clients=make_set(ClientInfoString, 5), Folders=make_set(tostring(parse_json(Folders)[0].Path), 10)
+          by Operation, OfficeWorkload, ClientIP
+      | order by First asc
+      // ClientInfoString "Client=REST;;;" with an app id, or an unfamiliar MAPI/OWA/IMAP string: the attacker's tool.
+      // SearchQueryInitiatedExchange needs Audit (Premium) and the SearchQueryInitiated owner action; it shows what they looked for.
+      // Deletions after reads: cleanup of sent phish, bounce notices or rule-created folders.
+      // Defender XDR without Sentinel:
+      // CloudAppEvents | where Timestamp > ago(30d) and AccountObjectId == "<object id>"
+      // | where ActionType in ("MailItemsAccessed","FileDownloaded") | summarize count() by ActionType, IPAddress
+      // An empty MailItemsAccessed result only means nothing was logged; check Get-Mailbox <upn> | fl AuditEnabled, DefaultAuditSet.
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1530"
+      - "T1213.002"
+  - id: "identity-breach-response/defender/s5-mail-sent-from-the-account-and-who-clicked-it-fi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Outbound"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "Mail sent from the account and who clicked it; files shared out of OneDrive and SharePoint"
+    why: "Internal phish sent from a trusted mailbox is how one account becomes ten; every internal recipient who clicked is a candidate for the same containment, and every external recipient of a sharing link is a disclosure. EmailEvents and UrlClickEvents need Defender for Office 365; message trace is the fallback."
+    how: "Outside Sentinel: Get-MessageTraceV2 -SenderAddress <upn> -StartDate <start> -EndDate <end> (10 days per query, 90 days back, 5,000 rows max) and Start-HistoricalSearch for a complete export."
+    fp: "Assistants, shared mailboxes and newsletter senders mail many internal recipients every day; compare recipient set and subject lines with the 30 days before the window, not with zero. SharingSet also fires on every permission change inside a Teams channel."
+    query: |-
+      // a. What the account sent, by direction
+      EmailEvents
+      | where Timestamp > ago(30d) and (SenderFromAddress =~ "<upn>" or SenderMailFromAddress =~ "<upn>")
+      | summarize Messages=count(), Recipients=dcount(RecipientEmailAddress), First=min(Timestamp), Last=max(Timestamp),
+          WithUrl=countif(UrlCount > 0), WithAttachment=countif(AttachmentCount > 0), Subjects=make_set(Subject, 10)
+          by EmailDirection
+      // b. Who clicked a link in internal mail from the account (Safe Links required)
+      EmailEvents
+      | where Timestamp > ago(30d) and SenderFromAddress =~ "<upn>" and EmailDirection == "Intra-org"
+      | join kind=inner (UrlClickEvents | where Timestamp > ago(30d)) on NetworkMessageId
+      | project ClickTime=Timestamp1, Clicker=AccountUpn, Url, ActionType, IsClickedThrough, Subject
+      | order by ClickTime asc
+      // ActionType "ClickAllowed", or any row with IsClickedThrough == true: that user entered the kit; contain them now.
+      // c. Sharing out of OneDrive and SharePoint
+      OfficeActivity
+      | where TimeGenerated > ago(30d) and UserId =~ "<upn>"
+      | where Operation in ("SharingSet", "SharingInvitationCreated", "AnonymousLinkCreated", "SecureLinkCreated",
+          "AddedToSecureLink", "CompanyLinkCreated", "SharingLinkCreated")
+      | project TimeGenerated, Operation, OfficeWorkload, ClientIP, Site_Url, SourceFileName, TargetUserOrGroupName, TargetUserOrGroupType
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1534"
+      - "T1567"
+  - id: "identity-breach-response/defender/s6-role-assignments-to-or-by-the-account-including"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Privilege"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "Role assignments to or by the account, including PIM, role-assignable groups and Azure RBAC"
+    why: "If the account holds or gained an admin role, this is a tenant incident, not a user incident: containment and notification both widen. Membership of a role-assignable group or an Azure Owner assignment is the same escalation under a different operation name."
+    how: null
+    fp: "PIM activations by the user's own admin account from the usual IP are routine; the signal is an assignment made by another actor, from the attacker IP, or to a group that was never role-assignable before the window."
+    query: |-
+      AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where (Category == "RoleManagement" and (OperationName startswith "Add member to role" or OperationName startswith "Add eligible member to role"))
+         or (Category == "GroupManagement" and OperationName == "Add member to group")
+      | where tostring(TargetResources) has "<upn>" or tostring(InitiatedBy) has "<upn>"
+      | project TimeGenerated, Category, OperationName, Result, Actor=tostring(InitiatedBy.user.userPrincipalName), TargetResources
+      | order by TimeGenerated asc
+      // "Add member to group": check the group with Get-MgGroup -GroupId <id> -Property IsAssignableToRole, and whether it holds an Azure role.
+      // Azure RBAC writes by or to the account (AzureActivity via the Azure Activity connector)
+      AzureActivity
+      | where TimeGenerated > ago(30d)
+      | where OperationNameValue =~ "Microsoft.Authorization/roleAssignments/write" and ActivityStatusValue == "Success"
+      | where Caller =~ "<upn>" or tostring(Properties) has "<object id>"
+      | project TimeGenerated, Caller, CallerIpAddress, SubscriptionId, ResourceGroup, Properties
+      // Every directory change the account itself made:
+      // AuditLogs | where TimeGenerated > ago(30d) and tostring(InitiatedBy.user.userPrincipalName) =~ "<upn>" | summarize count() by OperationName
+    tested: null
+    attack:
+      - "T1098.003"
+      - "T1078.004"
+  - id: "identity-breach-response/defender/s7-other-users-signing-in-from-the-attacker-s-ips-o"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Other accounts"
+    stage_ord: 7
+    platform: "Defender XDR / Sentinel"
+    title: "Other users signing in from the attacker's IPs or user agent, and flagged by Identity Protection on the same source"
+    why: "AiTM kits and password sprays hit many users from the same infrastructure; every other account seen here needs the same containment. The internal recipients who clicked are in Stage 5."
+    how: null
+    fp: "A corporate NAT, Global Secure Access egress or a partner's VPN puts many legitimate users behind one IP; check the address against named locations before containing by IP. Residential-proxy kits rotate sources, so an empty result on the first IP does not clear the tenant."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d)
+      | where IPAddress in ("<ip1>","<ip2>")          // or: UserAgent == "<attacker user agent>"
+      | summarize Attempts=count(), Successes=countif(ResultType == "0"), First=min(TimeGenerated), Apps=make_set(AppDisplayName, 5)
+          by UserPrincipalName
+      | order by First asc
+      // Risk detections on the same source, tenant-wide
+      AADUserRiskEvents
+      | where TimeGenerated > ago(30d) and IpAddress in ("<ip1>","<ip2>")
+      | summarize Detections=make_set(RiskEventType), First=min(TimeGenerated) by UserPrincipalName, RiskState
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1110.003"
+  - id: "identity-breach-response/defender/s8-conditional-access-named-locations-users-apps-cr"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Tenant changes"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Conditional Access, named locations, users, apps, credentials, federation, partners, transport rules and audit settings changed in the window"
+    why: "A changed CA policy, a new federated domain, a GDAP partner or a credential on an existing privileged app is a back door that survives every per-user action on this page. A switched-off audit log is the point past which you are blind; date it."
+    how: null
+    fp: "CA-as-code pipelines and Entra Connect write policies and users on a schedule; match on actor, app and time, not on the operation alone. Entra Connect itself shows as \"Sync_\" actors and an app actor; an interactive user doing the same is the finding."
+    query: |-
+      // Entra: directory and policy changes in the window, by anyone
+      AuditLogs
+      | where TimeGenerated between (datetime(<window start>) .. datetime(<window end>))
+      | where OperationName has_any ("Conditional Access policy", "named location", "security defaults",
+          "Add user", "Add application", "Add service principal", "Add service principal credentials",
+          "Add owner to application", "Add owner to service principal", "Set federation settings on domain",
+          "Set domain authentication", "Add unverified domain", "Verify domain", "Add partner to company",
+          "authorization policy", "Update StsRefreshTokenValidFrom Timestamp")
+         or OperationName has "Certificates and secrets management"
+      | project TimeGenerated, Category, OperationName, Result, Actor=tostring(InitiatedBy.user.userPrincipalName),
+                App=tostring(InitiatedBy.app.displayName), ActorIP=tostring(InitiatedBy.user.ipAddress),
+                Target=tostring(TargetResources[0].displayName), TargetResources
+      | order by TimeGenerated asc
+      // Exchange: transport rules, connectors, audit and auth settings
+      OfficeActivity
+      | where TimeGenerated between (datetime(<window start>) .. datetime(<window end>))
+      | where Operation in ("New-TransportRule", "Set-TransportRule", "Remove-TransportRule", "New-InboundConnector", "Set-InboundConnector",
+          "Set-AdminAuditLogConfig", "Set-OrganizationConfig", "Set-AuthenticationPolicy", "Set-MailboxAuditBypassAssociation",
+          "Add-RoleGroupMember", "New-ManagementRoleAssignment", "New-ApplicationAccessPolicy")
+      | project TimeGenerated, Operation, UserId, ClientIP, Parameters
+      // Set-AdminAuditLogConfig with UnifiedAuditLogIngestionEnabled false: the UAL was switched off; your evidence ends there.
+      // Set-MailboxAuditBypassAssociation: a mailbox silently excluded from auditing.
+    tested: null
+    attack:
+      - "T1556.009"
+      - "T1484.002"
+      - "T1136.003"
+      - "T1098.001"
+  - id: "identity-breach-response/defender/s9-token-use-and-graph-calls-after-the-revocation-t"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Defender XDR / Sentinel"
+    title: "Token use and Graph calls after the revocation time; which family clients the refresh token was minted for"
+    why: "revokeSignInSessions invalidates refresh tokens and session cookies; access tokens already issued live until they expire, 60–90 minutes by default and up to 28 hours on CAE-capable clients unless CAE pushed the revocation (it does for account disable and password change). A success after that window means containment missed a device, an app grant or a refresh token."
+    how: null
+    fp: "Successes inside the first 90 minutes after revocation from the user's own devices are cached access tokens expiring, not a missed channel. Office and Teams on a managed device re-authenticate silently with the PRT the moment the account is re-enabled; that is expected, from the attacker IP it is not."
+    query: |-
+      let revoked = datetime(<revocation time, UTC>);
+      // or: toscalar(AuditLogs | where OperationName == "Update StsRefreshTokenValidFrom Timestamp" and tostring(TargetResources) has "<upn>" | summarize max(TimeGenerated))
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > revoked and UserPrincipalName =~ "<upn>" and ResultType == "0"
+      | summarize SignIns=count(), First=min(TimeGenerated), Last=max(TimeGenerated) by Type, IPAddress, AppDisplayName, UserAgent, IncomingTokenType
+      | order by First asc
+      // Graph calls after the revocation (needs the "MicrosoftGraphActivityLogs" diagnostic setting; nothing is kept without it)
+      MicrosoftGraphActivityLogs
+      | where TimeGenerated > revoked and UserId == "<object id>"
+      | summarize Calls=count(), Last=max(TimeGenerated) by IPAddress, AppId, RequestMethod, RequestUri
+      | order by Calls desc
+      // Which FOCI family clients the attacker minted tokens for before revocation: one family refresh token serves all of them
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d) and UserPrincipalName =~ "<upn>" and IPAddress in ("<ip1>","<ip2>")
+      | where AppId in ("d3590ed6-52b3-4102-aeff-aad2292ab01c", "04b07795-8ddb-461a-bbee-02f9e1bf7b46", "1950a258-227b-4e31-a9cf-717495945fc2",
+          "1fec8e78-bce4-4aaf-ab1b-5451cc387264", "4813382a-8fa7-425e-ab75-3b753aab3abb", "27922004-5251-4030-b22d-91ecd9a37ea4",
+          "ab9b8c07-8f02-4f72-87fa-80105867a763")
+      | summarize Apps=make_set(AppDisplayName), First=min(TimeGenerated) by IPAddress, UserAgent
+    tested: null
+    attack:
+      - "T1550.001"
+      - "T1078.004"
+  - id: "identity-breach-response/crowdstrike/s1-successful-sign-ins-for-the-account-earliest-fir"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · First sign-in"
+    stage_ord: 1
+    platform: "CrowdStrike Falcon"
+    title: "Successful sign-ins for the account, earliest first per IP and client"
+    why: "The first successful sign-in from an attacker IP is the start of the exposure window; every later hunt and any breach notification is dated from it. Refresh-token replay and device-code redemptions are non-interactive sign-ins; check the connector ingests them (Stage 9)."
+    how: null
+    fp: "The user's own VPN egress and new office locations appear as new IPs; rank by first-seen and ASN, not by count."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.userPrincipalName="<upn>"
+      | groupBy([Vendor.properties.ipAddress, Vendor.properties.userAgent, Vendor.properties.appDisplayName, Vendor.properties.authenticationProtocol],
+          function=[min(@timestamp, as=FirstSeen), count(as=SignIns)])
+      | sort(FirstSeen, order=asc)
+      // CrowdStrike documents Vendor.properties.authenticationProtocol and .appId for this connector.
+      // userPrincipalName / ipAddress / userAgent / appDisplayName are the matching keys of the raw
+      // Entra sign-in record: check them on one parsed event before trusting an empty result.
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "identity-breach-response/crowdstrike/s2-how-mfa-was-satisfied-prt-from-an-unmanaged-devi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · MFA"
+    stage_ord: 2
+    platform: "CrowdStrike Falcon"
+    title: "How MFA was satisfied; PRT from an unmanaged device; one session on two IPs; cookie theft on the victim's device"
+    why: "A password reset does not stop a stolen session cookie, a replayed PRT or a device-code token; how MFA was passed decides whether you revoke sessions, remove devices, or also rebuild the victim's PC."
+    how: null
+    fp: "A phone moving between Wi-Fi and cellular shows one session on two IPs within minutes; weigh ASN and country. Remote-debugging flags are also set by browser automation on developer machines."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.userPrincipalName="<upn>"
+      | Vendor.properties.authenticationProtocol=deviceCode
+      // a hit is device-code phishing (fields as in CrowdStrike's Entra ID / PRT abuse blog)
+      // PRT from an unmanaged device and one session id on two IPs: the raw Entra keys are
+      // incomingTokenType (= primaryRefreshToken), deviceDetail.isManaged, deviceDetail.deviceId and sessionId;
+      // confirm the parsed names on one event, then:
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.userPrincipalName="<upn>"
+      | groupBy([Vendor.properties.sessionId], function=[collect([Vendor.properties.ipAddress]), count(Vendor.properties.ipAddress, distinct=true, as=Sources)])
+      | Sources > 1
+      // Endpoint: Chromium started for remote debugging (cookie theft), on the victim's device
+      #event_simpleName=ProcessRollup2 ComputerName="<victim host>"
+      | ImageFileName=/\\(chrome|msedge)\.exe$/i CommandLine=/--remote-debugging-port/i
+      | table([@timestamp, ComputerName, UserName, CommandLine])
+    tested: null
+    attack:
+      - "T1539"
+      - "T1550.004"
+      - "T1528"
+  - id: "identity-breach-response/crowdstrike/s3-mfa-methods-taps-device-registrations-app-consen"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Persistence"
+    stage_ord: 3
+    platform: "CrowdStrike Falcon"
+    title: "MFA methods, TAPs, device registrations, app consents, inbox rules and forwarding"
+    why: "Each of these survives a password reset and a session revocation; anything found here has to be removed before the account is handed back."
+    how: null
+    fp: "Routine MFA enrolments and Authenticator re-registrations fire the same operations; keep hits inside the exposure window and from the attacker's IP."
+    query: |-
+      CrowdStrike does not publish the parsed field names for Entra audit or Microsoft 365
+      events. If your Entra ID / Microsoft 365 connectors ingest them: open one parsed audit
+      event for <upn>, find the operation-name field, then filter it for
+        User registered security info, Admin registered security info, Register device,
+        Add registered owner to device, Consent to application, Add delegated permission grant,
+        Add app role assignment grant to user, Add service principal credentials
+      and, on the Microsoft 365 events,
+        New-InboxRule, Set-InboxRule, UpdateInboxRules (Outlook and OWA log rules as this),
+        Set-Mailbox with a Forwarding* parameter, Add-MailboxPermission, New-TransportRule
+      and group by time and source IP.
+    tested: null
+    attack:
+      - "T1556.006"
+      - "T1098.005"
+      - "T1098.001"
+      - "T1564.008"
+  - id: "identity-breach-response/crowdstrike/s4-mail-read-and-files-downloaded-by-operation-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Data access"
+    stage_ord: 4
+    platform: "CrowdStrike Falcon"
+    title: "Mail read and files downloaded, by operation and client IP"
+    why: "What was read or downloaded from the attacker's IP decides whether this is a notifiable data breach and whose data it involves."
+    how: null
+    fp: "The owner's own clients dominate MailItemsAccessed; split by client IP first and exclude Microsoft service-tier addresses."
+    query: |-
+      No published field names for Microsoft 365 audit events in Falcon Next-Gen SIEM.
+      If the Microsoft 365 connector is ingesting: open one parsed event for <upn>, find the
+      operation, client-IP, ClientInfoString and OperationProperties fields, filter the operation
+      for MailItemsAccessed, FileDownloaded, FileSyncDownloadedFull, FileAccessed, SoftDelete,
+      HardDelete and group by operation and IP. In OperationProperties, MailAccessType=Sync means
+      whole folders were pulled and IsThrottled=True means the log under-counts.
+      Otherwise use the page's Search-UnifiedAuditLog command.
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1530"
+  - id: "identity-breach-response/crowdstrike/s6-role-assignments-to-or-by-the-account-including"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Privilege"
+    stage_ord: 6
+    platform: "CrowdStrike Falcon"
+    title: "Role assignments to or by the account, including PIM"
+    why: "If the account holds or gained an admin role, this is a tenant incident, not a user incident: containment and notification both widen."
+    how: null
+    fp: null
+    query: |-
+      No published field names for Entra audit events in Falcon Next-Gen SIEM. If the
+      Entra ID connector ingests audit logs: find the operation-name field on one parsed event
+      and filter it for "Add member to role", "Add eligible member to role" (PIM variants
+      start with the same words) and "Add member to group" (then check whether the group is
+      role-assignable), and see whether <upn> is the actor or the target.
+      Also: Falcon Identity Protection, if licensed, shows the account's privileged status.
+    tested: null
+    attack:
+      - "T1098.003"
+  - id: "identity-breach-response/crowdstrike/s7-other-users-signing-in-from-the-attacker-s-ips-o"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Other accounts"
+    stage_ord: 7
+    platform: "CrowdStrike Falcon"
+    title: "Other users signing in from the attacker's IPs or user agent"
+    why: "AiTM kits and password sprays hit many users from the same infrastructure; every other account seen here needs the same containment."
+    how: null
+    fp: "A corporate NAT or a partner's VPN puts many legitimate users behind one IP; check it against named locations before containing by IP."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.ipAddress="<ip1>" or Vendor.properties.ipAddress="<ip2>"
+      | groupBy([Vendor.properties.userPrincipalName], function=[min(@timestamp, as=First), count(as=SignIns)])
+      | sort(First, order=asc)
+      // field names as in Stage 1: confirm on one parsed event
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1110.003"
+  - id: "identity-breach-response/crowdstrike/s8-conditional-access-users-apps-credentials-federa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Tenant changes"
+    stage_ord: 8
+    platform: "CrowdStrike Falcon"
+    title: "Conditional Access, users, apps, credentials, federation and partner changes in the window"
+    why: "A changed CA policy, a new federated domain, a GDAP partner or a credential on an existing privileged app is a back door that survives every per-user action on this page."
+    how: null
+    fp: "CA-as-code pipelines and Entra Connect write policies and users on a schedule; match on actor and time, not on the operation alone."
+    query: |-
+      If the Entra ID connector ingests audit logs: on the operation-name field found in Stage 6,
+      restrict the time range to the exposure window and filter for operations containing
+        Conditional Access policy, named location, security defaults, Add user, Add application,
+        Add service principal, Add service principal credentials, Certificates and secrets management,
+        Add owner to application, Set federation settings on domain, Set domain authentication,
+        Add partner to company, authorization policy
+      by any actor, then group by actor and source IP. Otherwise use the page's Hour 1-4 AuditLogs query
+      in Sentinel or Get-MgAuditLogDirectoryAudit -All.
+    tested: null
+    attack:
+      - "T1556.009"
+      - "T1484.002"
+      - "T1136.003"
+  - id: "identity-breach-response/crowdstrike/s9-token-use-after-the-revocation-time"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "CrowdStrike Falcon"
+    title: "Token use after the revocation time"
+    why: "revokeSignInSessions invalidates refresh tokens and session cookies; access tokens already issued live until they expire, 60–90 minutes by default and up to 28 hours on CAE-capable clients unless CAE pushed the revocation. A success after that window means containment missed a device, an app grant or a refresh token."
+    how: null
+    fp: "Successes inside the first 90 minutes from the user's own devices are cached access tokens expiring, not a missed channel."
+    query: |-
+      Set the search window to start at the revocation time, then:
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.userPrincipalName="<upn>"
+      | groupBy([Vendor.properties.ipAddress, Vendor.properties.appDisplayName, Vendor.properties.isInteractive],
+          function=[max(@timestamp, as=Last), count(as=SignIns)])
+      // whether the connector includes non-interactive sign-ins depends on its configuration: check before relying on an empty result
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "identity-breach-response/sentinelone/s1-successful-sign-ins-for-the-account-earliest-fir"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · First sign-in"
+    stage_ord: 1
+    platform: "SentinelOne"
+    title: "Successful sign-ins for the account, earliest first per IP and client"
+    why: "The first successful sign-in from an attacker IP is the start of the exposure window; every later hunt and any breach notification is dated from it. Check whether the Entra source carries non-interactive sign-ins; refresh-token replay and device-code redemptions are logged there."
+    how: null
+    fp: "The user's own VPN egress and new office locations appear as new IPs; rank by first-seen, not by count."
+    query: |-
+      // 1. Which data sources carry this user?
+      * contains '<upn>'
+      | group Events = count() by dataSource.name
+      // 2. Dump one event from the Entra source to learn its field names
+      dataSource.name = '<entra source>' | limit 1 | columns *
+      // 3. On that source, group by the IP and user-agent fields step 2 showed, earliest first
+      dataSource.name = '<entra source>' <user field> contains:anycase '<upn>'
+      | group First = oldest(timestamp), Events = count() by <ip field>, <user agent field>, <app field>
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "identity-breach-response/sentinelone/s2-how-mfa-was-satisfied-prt-from-an-unmanaged-devi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · MFA"
+    stage_ord: 2
+    platform: "SentinelOne"
+    title: "How MFA was satisfied; PRT from an unmanaged device; one session on two IPs; infostealer and cookie theft on the victim's device"
+    why: "A password reset does not stop a stolen session cookie, a replayed PRT or a device-code token; how MFA was passed decides whether you revoke sessions, remove devices, or also rebuild the victim's PC."
+    how: null
+    fp: "A phone moving between Wi-Fi and cellular shows one session on two IPs within minutes. Remote-debugging flags are also set by browser automation on developer machines; InfoStealer indicators fire on some password-manager and backup tools reading browser databases."
+    query: |-
+      // Entra authentication details: on the Entra source and fields found in Stage 1, filter the raw keys
+      // authenticationProtocol = deviceCode, incomingTokenType = primaryRefreshToken with deviceDetail.isManaged false,
+      // and group by sessionId with count_distinct(<ip field>) > 1 for a cookie seen from two sources.
+      // Endpoint, on the victim's device: SentinelOne infostealer indicators
+      indicator.category = 'InfoStealer'
+      | group Hits = count() by endpoint.name, src.process.name
+      // Chromium started for remote debugging (cookie theft)
+      event.type = 'Process Creation' AND tgt.process.name in ('chrome.exe','msedge.exe')
+        AND tgt.process.cmdline contains '--remote-debugging-port'
+      | columns event.time, endpoint.name, src.process.name, tgt.process.cmdline
+    tested: null
+    attack:
+      - "T1539"
+      - "T1550.004"
+      - "T1555.003"
+  - id: "identity-breach-response/sentinelone/s3-mfa-methods-taps-device-registrations-app-consen"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Persistence"
+    stage_ord: 3
+    platform: "SentinelOne"
+    title: "MFA methods, TAPs, device registrations, app consents, inbox rules and forwarding"
+    why: "Each of these survives a password reset and a session revocation; anything found here has to be removed before the account is handed back."
+    how: null
+    fp: "Routine MFA enrolments and Authenticator re-registrations fire the same operations; keep hits inside the exposure window and from the attacker's IP."
+    query: |-
+      // After discovery (Stage 1), on the Entra audit source:
+      dataSource.name = '<entra audit source>' <operation field> in ('User registered security info',
+        'Admin registered security info', 'Register device', 'Add registered owner to device',
+        'Consent to application', 'Add delegated permission grant', 'Add app role assignment grant to user',
+        'Add service principal credentials')
+      | columns timestamp, <operation field>, <actor field>, <actor ip field>, <target field>
+      // Inbox rules and forwarding: the same on the Microsoft 365 source,
+      // <operation field> in ('New-InboxRule','Set-InboxRule','UpdateInboxRules','Set-Mailbox','Add-MailboxPermission','New-TransportRule')
+      // Outlook and OWA log rules as UpdateInboxRules; keep Set-Mailbox rows whose parameters mention Forwarding.
+    tested: null
+    attack:
+      - "T1556.006"
+      - "T1098.005"
+      - "T1098.001"
+      - "T1564.008"
+  - id: "identity-breach-response/sentinelone/s4-mail-read-and-files-downloaded-by-operation-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Data access"
+    stage_ord: 4
+    platform: "SentinelOne"
+    title: "Mail read and files downloaded, by operation and client IP"
+    why: "What was read or downloaded from the attacker's IP decides whether this is a notifiable data breach and whose data it involves."
+    how: null
+    fp: "The owner's own clients dominate MailItemsAccessed; split by client IP first. Cached-mode Outlook and mobile mail apps legitimately show Sync."
+    query: |-
+      // After discovery (Stage 1), on the Microsoft 365 source:
+      dataSource.name = '<m365 source>' <operation field> in ('MailItemsAccessed','FileDownloaded',
+        'FileSyncDownloadedFull','FileAccessed','SoftDelete','HardDelete') <user field> contains:anycase '<upn>'
+      | group Events = count(), First = oldest(timestamp) by <operation field>, <client ip field>, <ClientInfoString field>
+      // In the MailItemsAccessed OperationProperties: MailAccessType=Sync means whole folders were pulled;
+      // IsThrottled=True means the log stopped counting at 1,000 in 24 h and under-states the read.
+      // SentinelOne's M365 note: exclude Microsoft service-tier IPs before ranking client IPs
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1530"
+  - id: "identity-breach-response/sentinelone/s5-mail-sent-from-the-account-and-files-shared-out"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Outbound"
+    stage_ord: 5
+    platform: "SentinelOne"
+    title: "Mail sent from the account and files shared out of OneDrive and SharePoint"
+    why: "Internal phish from a trusted mailbox is how one account becomes ten; external sharing links are a disclosure. The Exchange \"Send\" audit record needs Audit (Premium); message trace is the complete source and is not in the lake."
+    how: null
+    fp: "Assistants and shared mailboxes mail many internal recipients daily; compare with the 30 days before the window. SharingSet fires on every permission change inside a Teams channel."
+    query: |-
+      // After discovery (Stage 1), on the Microsoft 365 source:
+      dataSource.name = '<m365 source>' <user field> contains:anycase '<upn>'
+        <operation field> in ('Send','SendAs','SendOnBehalf','SharingSet','SharingInvitationCreated',
+        'AnonymousLinkCreated','SecureLinkCreated','AddedToSecureLink')
+      | columns timestamp, <operation field>, <client ip field>, <target user field>, <object field>
+      // Recipients and subjects of every message sent: Get-MessageTraceV2 -SenderAddress <upn> (10 days per query, 90 days back).
+    tested: null
+    attack:
+      - "T1534"
+      - "T1567"
+  - id: "identity-breach-response/sentinelone/s6-role-assignments-to-or-by-the-account-including"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Privilege"
+    stage_ord: 6
+    platform: "SentinelOne"
+    title: "Role assignments to or by the account, including PIM"
+    why: "If the account holds or gained an admin role, this is a tenant incident, not a user incident: containment and notification both widen."
+    how: null
+    fp: null
+    query: |-
+      // After discovery (Stage 1), on the Entra audit source:
+      dataSource.name = '<entra audit source>' <operation field> contains ('Add member to role','Add eligible member to role','Add member to group')
+      | columns timestamp, <operation field>, <actor field>, <target field>
+      // 'Add member to group': check the group with Get-MgGroup -GroupId <id> -Property IsAssignableToRole
+    tested: null
+    attack:
+      - "T1098.003"
+  - id: "identity-breach-response/sentinelone/s7-other-users-signing-in-from-the-attacker-s-ips-o"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Other accounts"
+    stage_ord: 7
+    platform: "SentinelOne"
+    title: "Other users signing in from the attacker's IPs or user agent"
+    why: "AiTM kits and password sprays hit many users from the same infrastructure; every other account seen here needs the same containment."
+    how: null
+    fp: "A corporate NAT or a partner's VPN puts many legitimate users behind one IP; check it against named locations before containing by IP."
+    query: |-
+      // Value-anywhere search finds the IP in any parsed field, on every source
+      * contains '<ip>'
+      | group Events = count() by dataSource.name, <user field>
+      // <user field>: the Entra user field found in Stage 1
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1110.003"
+  - id: "identity-breach-response/sentinelone/s8-conditional-access-users-apps-credentials-federa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Tenant changes"
+    stage_ord: 8
+    platform: "SentinelOne"
+    title: "Conditional Access, users, apps, credentials, federation and partner changes in the window"
+    why: "A changed CA policy, a new federated domain, a GDAP partner or a credential on an existing privileged app is a back door that survives every per-user action on this page."
+    how: null
+    fp: "CA-as-code pipelines and Entra Connect write policies and users on a schedule; match on actor and time, not on the operation alone."
+    query: |-
+      // After discovery (Stage 1), on the Entra audit source, time range = the exposure window, any actor:
+      dataSource.name = '<entra audit source>' <operation field> contains ('Conditional Access policy','named location',
+        'security defaults','Add user','Add application','Add service principal','Add service principal credentials',
+        'Certificates and secrets management','Add owner to application','Set federation settings on domain',
+        'Set domain authentication','Add partner to company','authorization policy')
+      | columns timestamp, <operation field>, <actor field>, <actor ip field>, <target field>
+      // Exchange tenant settings (transport rules, connectors, Set-AdminAuditLogConfig): the same on the Microsoft 365 source.
+    tested: null
+    attack:
+      - "T1556.009"
+      - "T1484.002"
+      - "T1136.003"
+  - id: "identity-breach-response/sentinelone/s9-token-use-after-the-revocation-time"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "SentinelOne"
+    title: "Token use after the revocation time"
+    why: "revokeSignInSessions invalidates refresh tokens and session cookies; access tokens already issued live until they expire, 60–90 minutes by default and up to 28 hours on CAE-capable clients unless CAE pushed the revocation. A success after that window means containment missed a device, an app grant or a refresh token."
+    how: null
+    fp: "Successes inside the first 90 minutes from the user's own devices are cached access tokens expiring, not a missed channel."
+    query: |-
+      // Set the time range to start at the revocation time. On the Entra sign-in source from Stage 1:
+      dataSource.name = '<entra source>' <user field> contains:anycase '<upn>'
+      | group SignIns = count(), Last = newest(timestamp) by <ip field>, <app field>
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "identity-breach-response/velociraptor/s1-the-lure-the-victim-followed-on-the-victim-s-pc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · First sign-in"
+    stage_ord: 1
+    platform: "Velociraptor"
+    title: "The lure the victim followed, on the victim's PC"
+    why: "Velociraptor cannot see Entra sign-ins; the sign-in time comes from the Entra log. The PC can show the AiTM page or device-code prompt the victim opened, which dates the phish and names the kit's domain."
+    how: null
+    fp: "microsoft.com/devicelogin is visited legitimately by users setting up CLI tools, Teams Rooms and printers; a hit minutes before the first attacker sign-in is the finding, not the visit itself."
+    query: |-
+      Hunt: Windows.Applications.Chrome.History   (default globs cover Chrome, Edge, Brave, Vivaldi, Opera)
+        URLRegex  = (?i)<lure domain>|microsoft\.com/devicelogin
+        userRegex = <victim user>
+    tested: null
+    attack:
+      - "T1566.002"
+      - "T1528"
+  - id: "identity-breach-response/velociraptor/s2-session-cookie-theft-and-infostealer-traces-on-t"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · MFA"
+    stage_ord: 2
+    platform: "Velociraptor"
+    title: "Session-cookie theft and infostealer traces on the victim's device"
+    why: "Velociraptor cannot see how Entra evaluated MFA. It can show whether the session was taken from the victim's PC: a remote-debugging browser start, a rogue extension, or a stealer in Prefetch."
+    how: null
+    fp: "Remote-debugging flags are also set by browser automation on developer machines; a stealer name in Prefetch with a run time inside the window is the finding."
+    query: |-
+      Hunt: Windows.EventLogs.EvtxHunter
+        IocRegex = (?i)remote-debugging-port     (needs command-line logging: Sysmon or 4688)
+      Hunt: Windows.Applications.Chrome.Extensions   (Chrome by default; set extensionGlobs for Edge)
+      Hunt: Windows.Forensics.Prefetch
+        binaryRegex = (?i)<infostealer name from the EDR alert>
+    tested: null
+    attack:
+      - "T1539"
+      - "T1555.003"
+  - id: "identity-breach-response/velociraptor/s7-other-pcs-that-opened-the-same-lure"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Other accounts"
+    stage_ord: 7
+    platform: "Velociraptor"
+    title: "Other PCs that opened the same lure"
+    why: "No view of sign-ins; if other users' PCs may have hit the same lure, the browser history across the fleet names them before the Entra log does."
+    how: null
+    fp: null
+    query: |-
+      Hunt: Windows.Applications.Chrome.History   (all clients)
+        URLRegex = (?i)<lure domain>
+    tested: null
+    attack:
+      - "T1566.002"
+  - id: "identity-breach-response/velociraptor/s9-a-stealer-still-running-after-containment"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Velociraptor"
+    title: "A stealer still running after containment"
+    why: "No view of token use. The endpoint risk after revocation is an infostealer still running on the victim's PC and stealing the new session the moment the account is re-enabled."
+    how: null
+    fp: null
+    query: |-
+      Hunt: Windows.System.Pslist
+        ProcessRegex = (?i)<infostealer process name>
+      Keep the device quarantined until it is re-imaged.
+    tested: null
+    attack:
+      - "T1555.003"
+  - id: "identity-breach-response/splunk/s1-successful-sign-ins-for-the-account-interactive"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · First sign-in"
+    stage_ord: 1
+    platform: "Splunk"
+    title: "Successful sign-ins for the account, interactive and non-interactive, earliest first per IP and client"
+    why: "The first successful sign-in from an attacker IP is the start of the exposure window; every later hunt and any breach notification is dated from it. Refresh-token replay and device-code redemptions are non-interactive and only arrive through the Event Hub input."
+    how: null
+    fp: "The user's own VPN egress and new office locations appear as new IPs; rank by first-seen, not by count."
+    query: |-
+      index=<index> sourcetype="azure:aad:signin" userPrincipalName="<upn>" status.errorCode=0
+      | stats min(_time) as first_seen max(_time) as last_seen count by ipAddress appDisplayName clientAppUsed authenticationProtocol
+      | sort first_seen
+      | convert ctime(first_seen) ctime(last_seen)
+      // Non-interactive (Event Hub input)
+      index=<index> sourcetype="azure:monitor:aad" category="NonInteractiveUserSignInLogs"
+        properties.userPrincipalName="<upn>" properties.status.errorCode=0
+      | stats min(_time) as first_seen count by properties.ipAddress properties.appDisplayName properties.incomingTokenType
+      | sort first_seen
+      | convert ctime(first_seen)
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "identity-breach-response/splunk/s2-how-mfa-was-satisfied-prt-from-an-unmanaged-devi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · MFA"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "How MFA was satisfied; PRT from an unmanaged device; one session on two IPs; cookie theft on the victim's device"
+    why: "A password reset does not stop a stolen session cookie, a replayed PRT or a device-code token; how MFA was passed decides whether you revoke sessions, remove devices, or also rebuild the victim's PC."
+    how: null
+    fp: "A phone moving between Wi-Fi and cellular shows one session on two IPs within minutes; weigh ASN and country. Remote-debugging flags are also set by browser automation on developer machines."
+    query: |-
+      index=<index> sourcetype="azure:aad:signin" userPrincipalName="<upn>" ipAddress="<ip>"
+      | table _time ipAddress appDisplayName authenticationProtocol authenticationRequirement incomingTokenType
+              authenticationDetails{}.authenticationMethod authenticationDetails{}.authenticationStepResultDetail
+      // these fields exist only when the add-on input reads the Graph beta endpoint
+      // PRT from a device Entra does not manage
+      index=<index> sourcetype="azure:aad:signin" userPrincipalName="<upn>" incomingTokenType="primaryRefreshToken"
+        NOT deviceDetail.isManaged="true"
+      | table _time ipAddress appDisplayName deviceDetail.deviceId deviceDetail.trustType sessionId
+      // One session id from more than one IP
+      index=<index> sourcetype="azure:aad:signin" userPrincipalName="<upn>" sessionId=*
+      | stats dc(ipAddress) as sources values(ipAddress) as ips min(_time) as first by sessionId
+      | where sources > 1
+      // Endpoint (Sysmon): Chromium started for remote debugging (cookie theft)
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1
+        (Image="*\\chrome.exe" OR Image="*\\msedge.exe") CommandLine="*--remote-debugging-port*"
+      | table _time host User ParentImage CommandLine
+    tested: null
+    attack:
+      - "T1539"
+      - "T1550.004"
+      - "T1528"
+  - id: "identity-breach-response/splunk/s3-mfa-methods-taps-device-registrations-app-consen"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Persistence"
+    stage_ord: 3
+    platform: "Splunk"
+    title: "MFA methods, TAPs, device registrations, app consents and credentials, inbox rules, forwarding, delegation, transport rules"
+    why: "Each of these survives a password reset and a session revocation; anything found here has to be removed before the account is handed back. Outlook and OWA log rule changes as UpdateInboxRules; only PowerShell logs New-InboxRule."
+    how: null
+    fp: "\"User registered security info\" fires on every routine enrolment and Authenticator re-registration; keep hits inside the exposure window and from the attacker's IP. Helpdesk-issued TAPs are normal; one issued by the compromised account, or from the attacker IP, is not."
+    query: |-
+      index=<index> sourcetype="azure:aad:audit"
+        (activityDisplayName IN ("User registered security info", "Admin registered security info",
+          "User deleted security info", "Register device", "Add registered owner to device",
+          "Add registered users to device", "Consent to application", "Add delegated permission grant",
+          "Add app role assignment grant to user", "Add app role assignment to service principal",
+          "Add service principal credentials") OR activityDisplayName="*Certificates and secrets management*")
+        ("initiatedBy.user.userPrincipalName"="<upn>" OR "targetResources{}.userPrincipalName"="<upn>")
+      | table _time activityDisplayName result resultReason initiatedBy.user.userPrincipalName initiatedBy.user.ipAddress targetResources{}.displayName
+      // resultReason containing "temporary access pass": a TAP was issued; who, from where, and was it redeemed from the attacker IP?
+      // Exchange: rules, forwarding, delegation, transport rules
+      index=<index> sourcetype="o365:management:activity" (UserId="<upn>" OR "Parameters{}.Value"="<upn>")
+        Operation IN ("New-InboxRule","Set-InboxRule","UpdateInboxRules","Set-Mailbox",
+          "Add-MailboxPermission","Add-MailboxFolderPermission","Add-RecipientPermission",
+          "New-TransportRule","Set-TransportRule","New-InboundConnector","Set-InboundConnector")
+      | where Operation!="Set-Mailbox" OR like(mvjoin('Parameters{}.Name', ","), "%Forwarding%") OR like(mvjoin('Parameters{}.Name', ","), "%DeliverToMailboxAndForward%")
+      | table _time Operation UserId ClientIP Parameters{}.Name Parameters{}.Value
+    tested: null
+    attack:
+      - "T1556.006"
+      - "T1098.005"
+      - "T1098.001"
+      - "T1564.008"
+  - id: "identity-breach-response/splunk/s4-mail-read-and-files-downloaded-by-client-ip-with"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Data access"
+    stage_ord: 4
+    platform: "Splunk"
+    title: "Mail read and files downloaded, by client IP, with sync-versus-bind, throttling, client string and deletions"
+    why: "What was read or downloaded from the attacker's IP decides whether this is a notifiable data breach and whose data it involves. MailAccessType Sync means whole folders were pulled; IsThrottled True means the log stopped counting after 1,000 accesses in 24 hours; ClientInfoString names the tool."
+    how: null
+    fp: "The owner's own clients dominate MailItemsAccessed; split by ClientIP first. Cached-mode Outlook and mobile mail apps legitimately show Sync; IsThrottled is also set by the user's own full-mailbox search."
+    query: |-
+      index=<index> sourcetype="o365:management:activity" UserId="<upn>"
+        Operation IN ("MailItemsAccessed","FileDownloaded","FileSyncDownloadedFull","FileAccessed",
+          "SearchQueryInitiatedExchange","MoveToDeletedItems","SoftDelete","HardDelete")
+      | eval MailAccessType=mvindex('OperationProperties{}.Value', mvfind('OperationProperties{}.Name', "MailAccessType")),
+             IsThrottled=mvindex('OperationProperties{}.Value', mvfind('OperationProperties{}.Name', "IsThrottled"))
+      | stats count min(_time) as first max(_time) as last
+              count(eval(MailAccessType="Sync")) as sync count(eval(IsThrottled="True")) as throttled
+              values(ClientInfoString) as clients values(Folders{}.Path) as folders
+              by Operation Workload ClientIP
+      | sort first
+      | convert ctime(first) ctime(last)
+      // SearchQueryInitiatedExchange needs Audit (Premium) and the SearchQueryInitiated owner action.
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1530"
+      - "T1213.002"
+  - id: "identity-breach-response/splunk/s5-mail-sent-from-the-account-message-trace-and-fil"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Outbound"
+    stage_ord: 5
+    platform: "Splunk"
+    title: "Mail sent from the account (message trace) and files shared out of OneDrive and SharePoint"
+    why: "Internal phish from a trusted mailbox is how one account becomes ten; external sharing links are a disclosure. Message trace is the complete source for sent mail; the Exchange \"Send\" audit record needs Audit (Premium)."
+    how: null
+    fp: "Assistants and shared mailboxes mail many internal recipients daily; compare recipient set and subjects with the 30 days before the window. SharingSet fires on every permission change inside a Teams channel."
+    query: |-
+      // Message trace input (last 10 days per fetch; Get-MessageTraceV2 covers 90 days outside Splunk)
+      index=<index> sourcetype="o365:reporting:messagetrace" SenderAddress="<upn>"
+      | stats count dc(RecipientAddress) as recipients values(Subject) as subjects min(_time) as first by RecipientAddress
+      | sort first
+      | convert ctime(first)
+      // Sharing out of OneDrive and SharePoint
+      index=<index> sourcetype="o365:management:activity" UserId="<upn>"
+        Operation IN ("SharingSet","SharingInvitationCreated","AnonymousLinkCreated","SecureLinkCreated","AddedToSecureLink","CompanyLinkCreated","SharingLinkCreated")
+      | table _time Operation Workload ClientIP SiteUrl SourceFileName TargetUserOrGroupName TargetUserOrGroupType
+    tested: null
+    attack:
+      - "T1534"
+      - "T1567"
+  - id: "identity-breach-response/splunk/s6-role-assignments-to-or-by-the-account-including"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Privilege"
+    stage_ord: 6
+    platform: "Splunk"
+    title: "Role assignments to or by the account, including PIM and role-assignable groups"
+    why: "If the account holds or gained an admin role, this is a tenant incident, not a user incident: containment and notification both widen. Membership of a role-assignable group is the same escalation under a different operation name."
+    how: null
+    fp: "PIM activations by the user's own admin account from the usual IP are routine; the signal is an assignment by another actor, from the attacker IP, or to a group that was never role-assignable before."
+    query: |-
+      index=<index> sourcetype="azure:aad:audit"
+        ((category="RoleManagement" (activityDisplayName="Add member to role*" OR activityDisplayName="Add eligible member to role*"))
+         OR (category="GroupManagement" activityDisplayName="Add member to group"))
+        ("initiatedBy.user.userPrincipalName"="<upn>" OR "targetResources{}.userPrincipalName"="<upn>")
+      | table _time category activityDisplayName result initiatedBy.user.userPrincipalName targetResources{}.userPrincipalName targetResources{}.displayName
+      | sort _time
+      // "Add member to group": check the group with Get-MgGroup -GroupId <id> -Property IsAssignableToRole.
+      // Azure RBAC writes: the Azure Activity log input of the Microsoft Cloud Services add-on; filter operationName
+      // on Microsoft.Authorization/roleAssignments/write (field names depend on the input type).
+    tested: null
+    attack:
+      - "T1098.003"
+      - "T1078.004"
+  - id: "identity-breach-response/splunk/s7-other-users-signing-in-from-the-attacker-s-ips-o"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Other accounts"
+    stage_ord: 7
+    platform: "Splunk"
+    title: "Other users signing in from the attacker's IPs or user agent"
+    why: "AiTM kits and password sprays hit many users from the same infrastructure; every other account seen here needs the same containment."
+    how: null
+    fp: "A corporate NAT or a partner's VPN puts many legitimate users behind one IP; check it against named locations before containing by IP."
+    query: |-
+      index=<index> sourcetype="azure:aad:signin" ipAddress IN ("<ip1>","<ip2>")
+      | stats count as attempts count(eval('status.errorCode'==0)) as successes min(_time) as first by userPrincipalName
+      | sort first
+      | convert ctime(first)
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1110.003"
+  - id: "identity-breach-response/splunk/s8-conditional-access-users-apps-credentials-federa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Tenant changes"
+    stage_ord: 8
+    platform: "Splunk"
+    title: "Conditional Access, users, apps, credentials, federation, partners, transport rules and audit settings changed in the window"
+    why: "A changed CA policy, a new federated domain, a GDAP partner or a credential on an existing privileged app is a back door that survives every per-user action on this page. A switched-off audit log is the point past which you are blind; date it."
+    how: null
+    fp: "CA-as-code pipelines and Entra Connect write policies and users on a schedule; match on actor and time, not on the operation alone."
+    query: |-
+      index=<index> sourcetype="azure:aad:audit" earliest="<window start>" latest="<window end>"
+        (activityDisplayName="*Conditional Access policy*" OR activityDisplayName="*named location*" OR activityDisplayName="*security defaults*"
+         OR activityDisplayName IN ("Add user","Add application","Add service principal","Add service principal credentials",
+           "Add owner to application","Add owner to service principal","Set federation settings on domain","Set domain authentication",
+           "Add unverified domain","Verify domain","Add partner to company")
+         OR activityDisplayName="*Certificates and secrets management*" OR activityDisplayName="*authorization policy*")
+      | table _time category activityDisplayName result initiatedBy.user.userPrincipalName initiatedBy.app.displayName initiatedBy.user.ipAddress targetResources{}.displayName
+      | sort _time
+      // Exchange tenant settings
+      index=<index> sourcetype="o365:management:activity" earliest="<window start>" latest="<window end>"
+        Operation IN ("New-TransportRule","Set-TransportRule","Remove-TransportRule","New-InboundConnector","Set-InboundConnector",
+          "Set-AdminAuditLogConfig","Set-OrganizationConfig","Set-AuthenticationPolicy","Set-MailboxAuditBypassAssociation",
+          "Add-RoleGroupMember","New-ManagementRoleAssignment","New-ApplicationAccessPolicy")
+      | table _time Operation UserId ClientIP Parameters{}.Name Parameters{}.Value
+      // Set-AdminAuditLogConfig with UnifiedAuditLogIngestionEnabled false: the UAL was switched off; your evidence ends there.
+    tested: null
+    attack:
+      - "T1556.009"
+      - "T1484.002"
+      - "T1136.003"
+      - "T1098.001"
+  - id: "identity-breach-response/splunk/s9-token-use-after-the-revocation-time"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Splunk"
+    title: "Token use after the revocation time"
+    why: "revokeSignInSessions invalidates refresh tokens and session cookies; access tokens already issued live until they expire, 60–90 minutes by default and up to 28 hours on CAE-capable clients unless CAE pushed the revocation. A success after that window means containment missed a device, an app grant or a refresh token."
+    how: null
+    fp: "Successes inside the first 90 minutes from the user's own devices are cached access tokens expiring, not a missed channel."
+    query: |-
+      index=<index> sourcetype="azure:monitor:aad" category IN ("SignInLogs","NonInteractiveUserSignInLogs")
+        properties.userPrincipalName="<upn>" properties.status.errorCode=0
+        earliest="<revocation time as %m/%d/%Y:%H:%M:%S>"
+      | stats count min(_time) as first max(_time) as last by category properties.ipAddress properties.appDisplayName properties.incomingTokenType
+      | convert ctime(first) ctime(last)
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "identity-breach-response/elastic/s1-successful-sign-ins-for-the-account-interactive"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · First sign-in"
+    stage_ord: 1
+    platform: "Elastic / Wazuh"
+    title: "Successful sign-ins for the account, interactive and non-interactive, earliest first per IP and client"
+    why: "The first successful sign-in from an attacker IP is the start of the exposure window; every later hunt and any breach notification is dated from it. Refresh-token replay and device-code redemptions land in the NonInteractiveUserSignInLogs category, which the integration only carries when the diagnostic setting exports it."
+    how: null
+    fp: "The user's own VPN egress and new office locations appear as new IPs; rank by first-seen, not by count."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE azure.signinlogs.properties.user_principal_name == "<upn>" AND event.outcome == "success"
+      | STATS first_seen = MIN(@timestamp), last_seen = MAX(@timestamp), signins = COUNT(*), categories = VALUES(azure.signinlogs.category)
+          BY source.ip, user_agent.original, azure.signinlogs.properties.app_display_name, azure.signinlogs.properties.authentication_protocol
+      | SORT first_seen ASC
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "identity-breach-response/elastic/s2-how-mfa-was-satisfied-prt-from-an-unmanaged-devi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · MFA"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "How MFA was satisfied; PRT from an unmanaged device; cookie theft on the victim's device"
+    why: "A password reset does not stop a stolen session cookie, a replayed PRT or a device-code token; how MFA was passed decides whether you revoke sessions, remove devices, or also rebuild the victim's PC. The integration does not map the Entra session id, so the two-IPs-per-session check is on the Defender or Splunk tab."
+    how: null
+    fp: "Entra-joined devices mid-enrolment and Windows 365 or AVD hosts can present a PRT with an empty device id. Remote-debugging flags are also set by browser automation on developer machines."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE azure.signinlogs.properties.user_principal_name == "<upn>" AND source.ip == TO_IP("<ip>")
+      | KEEP @timestamp, source.ip, azure.signinlogs.properties.app_display_name, azure.signinlogs.properties.authentication_protocol,
+             azure.signinlogs.properties.authentication_requirement, azure.signinlogs.properties.incoming_token_type
+      // PRT presented from a device the integration shows as unmanaged
+      FROM logs-azure.signinlogs-*
+      | WHERE azure.signinlogs.properties.user_principal_name == "<upn>"
+        AND azure.signinlogs.properties.incoming_token_type == "primaryRefreshToken"
+        AND azure.signinlogs.properties.device_detail.is_managed != true
+      | KEEP @timestamp, source.ip, azure.signinlogs.properties.app_display_name, azure.signinlogs.properties.device_detail.device_id, azure.signinlogs.properties.device_detail.trust_type
+      // Endpoint (EQL, same logic as Elastic's prebuilt rule "Potential Cookies Theft via Browser Debugging")
+      process where event.type == "start" and process.name : ("chrome.exe", "msedge.exe") and
+        process.args : "--remote-debugging-port=*" and process.args : "--user-data-dir=*"
+      // a hit on the victim's device: treat every session on it as stolen
+    tested: null
+    attack:
+      - "T1539"
+      - "T1550.004"
+      - "T1528"
+  - id: "identity-breach-response/elastic/s3-mfa-methods-taps-device-registrations-app-consen"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Persistence"
+    stage_ord: 3
+    platform: "Elastic / Wazuh"
+    title: "MFA methods, TAPs, device registrations, app consents and credentials, inbox rules, forwarding, delegation, transport rules"
+    why: "Each of these survives a password reset and a session revocation; anything found here has to be removed before the account is handed back. Outlook and OWA log rule changes as UpdateInboxRules; only PowerShell logs New-InboxRule."
+    how: null
+    fp: "\"User registered security info\" fires on every routine enrolment and Authenticator re-registration; keep hits inside the exposure window and from the attacker's IP. Helpdesk-issued TAPs are normal; one issued by the compromised account, or from the attacker IP, is not."
+    query: |-
+      FROM logs-azure.auditlogs-*
+      | WHERE azure.auditlogs.operation_name IN ("User registered security info", "Admin registered security info",
+          "User deleted security info", "Register device", "Add registered owner to device",
+          "Add registered users to device", "Consent to application", "Add delegated permission grant",
+          "Add app role assignment grant to user", "Add app role assignment to service principal", "Add service principal credentials")
+         OR azure.auditlogs.operation_name LIKE "*Certificates and secrets management*"
+      | KEEP @timestamp, azure.auditlogs.operation_name, azure.auditlogs.result_reason, azure.auditlogs.properties.initiated_by.user.userPrincipalName,
+             azure.auditlogs.properties.initiated_by.user.ipAddress, azure.auditlogs.properties.target_resources.0.display_name
+      | SORT @timestamp ASC
+      // result_reason containing "temporary access pass": a TAP was issued; who, from where, and was it redeemed from the attacker IP?
+      // Exchange: rules, forwarding, delegation, transport rules
+      FROM logs-o365.audit-*
+      | WHERE o365.audit.UserId == "<upn>"
+        AND o365.audit.Operation IN ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules", "Set-Mailbox",
+            "Add-MailboxPermission", "Add-MailboxFolderPermission", "Add-RecipientPermission",
+            "New-TransportRule", "Set-TransportRule", "New-InboundConnector", "Set-InboundConnector")
+      | KEEP @timestamp, o365.audit.Operation, o365.audit.ClientIP, o365.audit.Parameters
+      // keep Set-Mailbox rows whose Parameters mention ForwardingSmtpAddress, ForwardingAddress or DeliverToMailboxAndForward
+    tested: null
+    attack:
+      - "T1556.006"
+      - "T1098.005"
+      - "T1098.001"
+      - "T1564.008"
+  - id: "identity-breach-response/elastic/s4-mail-read-and-files-downloaded-by-client-ip-with"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Data access"
+    stage_ord: 4
+    platform: "Elastic / Wazuh"
+    title: "Mail read and files downloaded, by client IP, with client string, logon type and deletions"
+    why: "What was read or downloaded from the attacker's IP decides whether this is a notifiable data breach and whose data it involves. ClientInfoString names the tool; MailAccessType (Sync means whole folders) and IsThrottled (the log under-counts past 1,000 in 24 h) sit inside OperationProperties and are read per document."
+    how: null
+    fp: "The owner's own clients dominate MailItemsAccessed; split by ClientIP first. Cached-mode Outlook and mobile mail apps legitimately show Sync."
+    query: |-
+      FROM logs-o365.audit-*
+      | WHERE o365.audit.UserId == "<upn>"
+        AND o365.audit.Operation IN ("MailItemsAccessed", "FileDownloaded", "FileSyncDownloadedFull", "FileAccessed",
+            "SearchQueryInitiatedExchange", "MoveToDeletedItems", "SoftDelete", "HardDelete")
+      | STATS events = COUNT(*), first = MIN(@timestamp), last = MAX(@timestamp), clients = VALUES(o365.audit.ClientInfoString), logon_types = VALUES(o365.audit.LogonType)
+          BY o365.audit.Operation, o365.audit.Workload, o365.audit.ClientIP
+      | SORT first ASC
+      // Open the MailItemsAccessed documents from the attacker IP and read OperationProperties for MailAccessType and IsThrottled.
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1530"
+      - "T1213.002"
+  - id: "identity-breach-response/elastic/s5-mail-sent-from-the-account-audit-premium-and-fil"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Outbound"
+    stage_ord: 5
+    platform: "Elastic / Wazuh"
+    title: "Mail sent from the account (Audit Premium) and files shared out of OneDrive and SharePoint"
+    why: "Internal phish from a trusted mailbox is how one account becomes ten; external sharing links are a disclosure. The Exchange \"Send\" record needs Audit (Premium); there is no message-trace integration, so Get-MessageTraceV2 is the complete source for recipients."
+    how: null
+    fp: "Assistants and shared mailboxes mail many internal recipients daily; compare with the 30 days before the window. SharingSet fires on every permission change inside a Teams channel."
+    query: |-
+      FROM logs-o365.audit-*
+      | WHERE o365.audit.UserId == "<upn>"
+        AND o365.audit.Operation IN ("Send", "SendAs", "SendOnBehalf", "SharingSet", "SharingInvitationCreated",
+            "AnonymousLinkCreated", "SecureLinkCreated", "AddedToSecureLink", "CompanyLinkCreated", "SharingLinkCreated")
+      | KEEP @timestamp, o365.audit.Operation, o365.audit.Workload, o365.audit.ClientIP, o365.audit.ObjectId, o365.audit.TargetUserOrGroupName, o365.audit.TargetUserOrGroupType
+      | SORT @timestamp ASC
+      // Recipients and subjects of every message sent: Get-MessageTraceV2 -SenderAddress <upn> (10 days per query, 90 days back).
+    tested: null
+    attack:
+      - "T1534"
+      - "T1567"
+  - id: "identity-breach-response/elastic/s6-role-assignments-to-or-by-the-account-including"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Privilege"
+    stage_ord: 6
+    platform: "Elastic / Wazuh"
+    title: "Role assignments to or by the account, including PIM and role-assignable groups"
+    why: "If the account holds or gained an admin role, this is a tenant incident, not a user incident: containment and notification both widen. Membership of a role-assignable group is the same escalation under a different operation name."
+    how: null
+    fp: "PIM activations by the user's own admin account from the usual IP are routine; the signal is an assignment by another actor, from the attacker IP, or to a group that was never role-assignable before."
+    query: |-
+      FROM logs-azure.auditlogs-*
+      | WHERE azure.auditlogs.operation_name LIKE "Add member to role*"
+           OR azure.auditlogs.operation_name LIKE "Add eligible member to role*"
+           OR azure.auditlogs.operation_name == "Add member to group"
+      | KEEP @timestamp, azure.auditlogs.category, azure.auditlogs.operation_name, azure.auditlogs.properties.initiated_by.user.userPrincipalName,
+             azure.auditlogs.properties.target_resources.0.display_name
+      | SORT @timestamp ASC
+      // open each hit to read the target user and role under azure.auditlogs.properties.target_resources
+      // "Add member to group": check the group with Get-MgGroup -GroupId <id> -Property IsAssignableToRole
+    tested: null
+    attack:
+      - "T1098.003"
+      - "T1078.004"
+  - id: "identity-breach-response/elastic/s7-other-users-signing-in-from-the-attacker-s-ips-o"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Other accounts"
+    stage_ord: 7
+    platform: "Elastic / Wazuh"
+    title: "Other users signing in from the attacker's IPs or user agent"
+    why: "AiTM kits and password sprays hit many users from the same infrastructure; every other account seen here needs the same containment."
+    how: null
+    fp: "A corporate NAT or a partner's VPN puts many legitimate users behind one IP; check it against named locations before containing by IP."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE source.ip IN (TO_IP("<ip1>"), TO_IP("<ip2>"))      // or: user_agent.original == "<attacker user agent>"
+      | STATS attempts = COUNT(*), first = MIN(@timestamp) BY azure.signinlogs.properties.user_principal_name, event.outcome
+      | SORT first ASC
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1110.003"
+  - id: "identity-breach-response/elastic/s8-conditional-access-users-apps-credentials-federa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Tenant changes"
+    stage_ord: 8
+    platform: "Elastic / Wazuh"
+    title: "Conditional Access, users, apps, credentials, federation, partners, transport rules and audit settings changed in the window"
+    why: "A changed CA policy, a new federated domain, a GDAP partner or a credential on an existing privileged app is a back door that survives every per-user action on this page. A switched-off audit log is the point past which you are blind; date it."
+    how: null
+    fp: "CA-as-code pipelines and Entra Connect write policies and users on a schedule; match on actor, app and time, not on the operation alone."
+    query: |-
+      FROM logs-azure.auditlogs-*
+      | WHERE @timestamp >= TO_DATETIME("<window start>") AND @timestamp <= TO_DATETIME("<window end>")
+        AND (azure.auditlogs.operation_name LIKE "*Conditional Access policy*" OR azure.auditlogs.operation_name LIKE "*named location*"
+          OR azure.auditlogs.operation_name LIKE "*security defaults*" OR azure.auditlogs.operation_name LIKE "*Certificates and secrets management*"
+          OR azure.auditlogs.operation_name LIKE "*authorization policy*"
+          OR azure.auditlogs.operation_name IN ("Add user", "Add application", "Add service principal", "Add service principal credentials",
+              "Add owner to application", "Add owner to service principal", "Set federation settings on domain", "Set domain authentication",
+              "Add unverified domain", "Verify domain", "Add partner to company"))
+      | KEEP @timestamp, azure.auditlogs.category, azure.auditlogs.operation_name, azure.auditlogs.properties.initiated_by.user.userPrincipalName,
+             azure.auditlogs.properties.initiated_by.app.displayName, azure.auditlogs.properties.initiated_by.user.ipAddress,
+             azure.auditlogs.properties.target_resources.0.display_name
+      | SORT @timestamp ASC
+      // Exchange tenant settings
+      FROM logs-o365.audit-*
+      | WHERE @timestamp >= TO_DATETIME("<window start>") AND @timestamp <= TO_DATETIME("<window end>")
+        AND o365.audit.Operation IN ("New-TransportRule", "Set-TransportRule", "Remove-TransportRule", "New-InboundConnector", "Set-InboundConnector",
+            "Set-AdminAuditLogConfig", "Set-OrganizationConfig", "Set-AuthenticationPolicy", "Set-MailboxAuditBypassAssociation",
+            "Add-RoleGroupMember", "New-ManagementRoleAssignment", "New-ApplicationAccessPolicy")
+      | KEEP @timestamp, o365.audit.Operation, o365.audit.UserId, o365.audit.ClientIP, o365.audit.Parameters
+      // Set-AdminAuditLogConfig with UnifiedAuditLogIngestionEnabled false: the UAL was switched off; your evidence ends there.
+    tested: null
+    attack:
+      - "T1556.009"
+      - "T1484.002"
+      - "T1136.003"
+      - "T1098.001"
+  - id: "identity-breach-response/elastic/s9-token-use-after-the-revocation-time"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Elastic / Wazuh"
+    title: "Token use after the revocation time"
+    why: "revokeSignInSessions invalidates refresh tokens and session cookies; access tokens already issued live until they expire, 60–90 minutes by default and up to 28 hours on CAE-capable clients unless CAE pushed the revocation. A success after that window means containment missed a device, an app grant or a refresh token."
+    how: null
+    fp: "Successes inside the first 90 minutes from the user's own devices are cached access tokens expiring, not a missed channel."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > TO_DATETIME("<revocation time, ISO 8601>")
+        AND azure.signinlogs.properties.user_principal_name == "<upn>" AND event.outcome == "success"
+      | STATS signins = COUNT(*), first = MIN(@timestamp), last = MAX(@timestamp)
+          BY azure.signinlogs.category, source.ip, azure.signinlogs.properties.app_display_name, azure.signinlogs.properties.incoming_token_type
+      | SORT first ASC
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "identity-breach-response/defender/s4-app-only-data-access-by-a-vendor-appid-the-scope"
+    status: "active"
+    source: "Microsoft Security Blog 2026-10-21 Storm-0940 (successful authentication does not necessarily indicate data access); Huntress ConnectWise/SkyKick advisory; distill 2026-10-25 of T-Minus365 video (t=11:48 Mail.Read app-only demo, t=35:06 Purview extension)"
+    validated_at: "2026-10-25"
+    supersedes: null
+    stage: "Stage 4 · Data access"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "App-only data access by a vendor AppId: the scope is every mailbox and site, not one user"
+    why: "An application permission (Mail.Read, Files.Read.All, Sites.Read.All) with admin consent reaches every mailbox and site in the tenant without a signed-in user. The per-user data-access hunts (split MailItemsAccessed by the victim's ClientIP) do not frame it: here there is no victim account, only an AppId. Scope the reads by AppId and source IP across all mailboxes, and treat the breadth of mailboxes touched as the notifiability input. Graph activity logs answer this only if they were enabled before the window. Without them, fall back to MailItemsAccessed in the unified audit log filtered on the app id, keeping in mind the per-mailbox 1,000-records / 24h throttle (IsThrottled) under-states a bulk read. Microsoft's own caution: a successful sign-in by the app does not by itself show that data was accessed."
+    how: null
+    fp: "The vendor's own backup job reads every mailbox and site legitimately. Compare volume, endpoints and source ranges with its pattern before the window; calls that match that baseline, with none from the IoC IPs, are benign. A throttled MailItemsAccessed row (IsThrottled) means more was read than you can see, not less."
+    query: |-
+      // Example values from the ConnectWise advisory (Cloud Backup app id, IoC IP); replace with your vendor's app ids and IoCs.
+      let vendorAppIds = dynamic(["506e08f9-6e9a-4da4-942b-a099a03644ae"]);
+      let iocIPs = dynamic(["144.172.64.128"]);
+      MicrosoftGraphActivityLogs
+      | where TimeGenerated > ago(30d)
+      | where AppId in (vendorAppIds) and isempty(UserId)
+      | extend Workload = case(RequestUri has_any ("/messages","/mailFolders"), "mail", RequestUri has_any ("/drive","/drives","/sites"), "files", RequestUri has "/users", "directory", "other")
+      // Target = the mailbox, site or drive the call touched; counts users, sites and drives alike.
+      | extend Target = extract(@"/((?:users|sites|drives)/[^/?]+)", 1, RequestUri)
+      | summarize Calls = count(), Targets = dcountif(Target, isnotempty(Target)), First = min(TimeGenerated), Last = max(TimeGenerated) by AppId, IPAddress, Workload, IsIoC = IPAddress in (iocIPs)
+      | order by IsIoC desc, Calls desc
+      // No MicrosoftGraphActivityLogs for the window? An empty table here means no logging, not no reads. Fall back to the unified audit log:
+      //   One call returns at most 5,000 rows; page with a session id until a short page comes back.
+      //   ReturnLargeSet stops at 50,000 rows per session, so split a bulk read into one session per day.
+      //   $sid = [guid]::NewGuid().ToString(); $rows = @()
+      //   do { $page = Search-UnifiedAuditLog -StartDate <day start> -EndDate <day end> -Operations MailItemsAccessed `
+      //          -SessionId $sid -SessionCommand ReturnLargeSet -ResultSize 5000; $rows += $page } while ($page.Count -eq 5000)
+      //   $rows | ? { ($_.AuditData | ConvertFrom-Json).AppId -in @('<vendor app id>') } |
+      //     Group-Object { ($_.AuditData | ConvertFrom-Json).MailboxOwnerUPN } | Measure-Object   # mailboxes touched
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1530"
+  - id: "identity-breach-response/defender/s8-individual-security-defaults-rule-turned-off-in"
+    status: "active"
+    source: "https://github.com/MicrosoftDocs/entra-docs/commit/bb7280b7cd3538710cff4da36c4fd818bb436af1 (security-defaults.md, individual protections preview + phased rollout, 2026-10-14); discovered via T-Minus365 YouTube"
+    validated_at: "2026-10-25"
+    supersedes: null
+    stage: "Stage 8 · Tenant changes"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Individual Security Defaults rule turned off in the window (MFA for all users, legacy-auth block, device-code block)"
+    why: "With individual Security Defaults protections, an attacker with Security Administrator, Conditional Access Administrator or Global Administrator rights can turn off one rule instead of the whole baseline. That is a much quieter change. Turning off \"Block legacy authentication\" reopens password spray against legacy endpoints that check the password before MFA. Turning off \"Require MFA for all users\" takes MFA away from every non-admin. Turning off \"Block device code flow\" reopens the device-code lure. Like a Conditional Access change, any of these survives every per-user action. The existing Stage 8 query filters only on OperationName containing \"security defaults\". Microsoft doesn't document what a single-rule toggle writes, and if it logs as a generic \"Update policy\" with Security Defaults as the target, that filter misses it, so this query also matches on the target. On P1/P2 tenants the same baseline is a Microsoft-managed \"Security Defaults policy plan\" inside Conditional Access, and changes there appear as Conditional Access policy operations."
+    how: null
+    fp: "Microsoft changes rule states itself during the phased rollout of individual protections; a Microsoft or service actor writing the policy inside the window is the rollout, not the attacker. An interactive admin turning a rule off from an unfamiliar IP, or close to the first malicious sign-in, is the finding. Unverified: the audit entry a single-rule toggle writes is undocumented while the feature is in private preview."
+    query: |-
+      AuditLogs
+      | where TimeGenerated between (datetime(<window start>) .. datetime(<window end>))
+      | where OperationName has "security defaults"
+           or tostring(TargetResources) has_any ("Security Defaults", "identitySecurityDefaultsEnforcementPolicy")
+      | project TimeGenerated, OperationName, Result, Actor=tostring(InitiatedBy.user.userPrincipalName),
+                App=tostring(InitiatedBy.app.displayName), ActorIP=tostring(InitiatedBy.user.ipAddress),
+                Target=tostring(TargetResources[0].displayName), Modified=TargetResources[0].modifiedProperties
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1556.009"
+      - "T1685"
+  - id: "identity-breach-response/proposed/bulk-intune-remote-wipe-retire-delete-by-an-admin-account-and-new-global-adminis"
+    status: "active"
+    source: "BleepingComputer via SOCRadar 'Stryker Cyberattack: What You Need to Know' (80k devices, 05:00-08:00 UTC 2026-03-11, new GA created); The Record 2026-03-16; Sygnia advisory 2026-03-22; Microsoft Tech Community 'Best practices for securing Microsoft Intune' 2026-03-14; Microsoft Learn 'Use Multi Admin Approval in Intune' (3-day expiry, no self-approval); discovered via T-Minus365 kJS2otskhYk (distill 2026-10-25, t=00:00:08, t=00:09:20)"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 8 · Tenant changes"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Bulk Intune remote wipe/retire/delete by an admin account, and new Global Administrators created in the window"
+    why: "Intune remote wipe is a destructive action with no malware involved: an attacker holding Global Administrator or Intune Administrator can erase the whole managed fleet from the console or through Graph. Stryker, 11 March 2026: about 80,000 devices were wiped between 05:00 and 08:00 UTC after an admin account was compromised and, per reporting, a new Global Administrator was created first. A burst of wipe, retire or delete remote actions from one admin, especially one created or elevated in the window, is the impact stage of an identity breach, not an endpoint incident. Contain at the role layer first (remove the attacker's role assignments, freeze role assignment, disable the new admin accounts), then enforce Multi Admin Approval on wipe/retire/delete. MAA alone does not stop an attacker who holds Global Administrator: they can create a second admin to approve their own requests (MAA only blocks self-approval), so it slows them down rather than ending access. Pending or expired MAA requests (they expire after 3 days) are evidence of attempts. Treat the attacker's own claims about scale and data theft as unverified: Handala claimed 200,000 systems and 50 TB, while reporting close to the investigation said about 80,000 devices and no indication of exfiltration."
+    how: null
+    fp: "Device refreshes, offboarding runs and lost-device workflows wipe or retire devices every day, often in batches from a service account or automation app. The finding is a burst far above the tenant's normal daily count from an interactive admin who is new, newly elevated or signing in from an unfamiliar IP, especially across device groups that are never wiped together. MSP technicians acting through delegated admin access wipe customer devices legitimately; match those against the ticket."
+    query: |-
+      // Destructive Intune remote actions in the window, per actor (needs the Intune diagnostic setting sending AuditLogs to the workspace)
+      // Operation names and the Properties keys come from community write-ups on the Stryker attack, not from Microsoft's table reference
+      IntuneAuditLogs
+      | where TimeGenerated between (datetime(<window start>) .. datetime(<window end>))
+      | where OperationName in~ ("wipe ManagedDevice", "retire ManagedDevice", "Delete ManagedDevice")
+      | extend p = parse_json(Properties)
+      | summarize Actions=count(), First=min(TimeGenerated), Last=max(TimeGenerated),
+          Devices=make_set(tostring(p.TargetDisplayNames), 20) by Actor=Identity, OperationName, ResultType
+      | order by Actions desc
+      // Normal volume: the same actions per day over the 30 days before the window
+      IntuneAuditLogs
+      | where TimeGenerated between ((datetime(<window start>) - 30d) .. datetime(<window start>))
+      | where OperationName in~ ("wipe ManagedDevice", "retire ManagedDevice", "Delete ManagedDevice")
+      | summarize PerDay=count() by bin(TimeGenerated, 1d), OperationName
+      // Entra: accounts created, roles assigned or activated through PIM, and group memberships in the window, and who did it
+      AuditLogs
+      | where TimeGenerated between (datetime(<window start>) .. datetime(<window end>))
+      | where (Category == "UserManagement" and OperationName == "Add user")
+         or (Category == "RoleManagement" and (OperationName startswith "Add member to role" or OperationName startswith "Add eligible member to role"))
+         or (Category == "GroupManagement" and OperationName == "Add member to group")
+      | project TimeGenerated, Category, OperationName, Result, Actor=tostring(InitiatedBy.user.userPrincipalName),
+          ActorIP=tostring(InitiatedBy.user.ipAddress), App=tostring(InitiatedBy.app.displayName), TargetResources
+      | order by TimeGenerated asc
+      // "Add member to group" is a role grant only for role-assignable groups: check with Get-MgGroup -GroupId <id> -Property IsAssignableToRole
+    tested: null
+    attack:
+      - "T1485"
+      - "T1072"
+      - "T1136.003"
+      - "T1098.003"
+      - "T1078.004"
+  - id: "identity-breach-response/proposed/aitm-sign-in-blocked-by-device-based-conditional-access-the-password-and-mfa-wer"
+    status: "active"
+    source: "T-Minus365 'Token Theft | Disrupt the Kill Chain' jIdBf7e5v9M (speaker's own Evilginx demo, t=27:36; distill 2026-10-25); single-source demo, the CA error code to match on is not given in the source and needs confirming"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 2 · MFA"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "AiTM sign-in blocked by device-based Conditional Access: the password, and MFA if it was prompted, were still captured"
+    why: "When a managed-device or compliant-device Conditional Access policy is in place, an adversary-in-the-middle proxy (Evilginx-style) still relays the user's password and MFA, but Entra refuses to issue the session token, so the sign-in from the proxy's IP shows a correct password and MFA followed by a Conditional Access failure. That is not \"blocked, nothing to do\": the password is in the attacker's hands and the lure reached this user. Reset the password, check for a second attempt from other infrastructure, and use the same proxy IP to find the other users the lure reached. Ruled out when the failing sign-in comes from the user's own known device or network (an unenrolled new laptop fails the same way), not a hosting provider."
+    how: null
+    fp: "Conditional Access failures after a correct password are routine: a new or unenrolled laptop, a personal phone, a device whose compliance state has lapsed. The source tells them apart. The user's own device id or usual ISP is benign; a hosting-provider ASN with no device id, minutes after the user clicked a link, is the proxy."
+    query: |-
+      // Interactive sign-ins Conditional Access refused: 53000 = device not compliant, 53001 = device not domain or hybrid joined,
+      // 53003 = blocked by policy (any policy, not only device ones: read ConditionalAccessPolicies for which one failed)
+      // Read AuthenticationDetails: a correct password (and MFA, if it was prompted) before the refusal means the proxy captured them
+      // SigninLogs only: the proxy's sign-in is interactive, and a union with the non-interactive table splits DeviceDetail and AuthenticationDetails by type
+      SigninLogs
+      | where TimeGenerated > ago(30d)
+      | where ResultType in ("53000", "53001", "53003")
+      | where UserPrincipalName =~ "<upn>" or IPAddress in ("<proxy ip>")
+      | project TimeGenerated, UserPrincipalName, IPAddress, AutonomousSystemNumber, AppDisplayName, ResultType,
+          DeviceId=tostring(DeviceDetail.deviceId), IsManaged=tostring(DeviceDetail.isManaged), UserAgent,
+          AuthenticationDetails, ConditionalAccessPolicies
+      | order by TimeGenerated asc
+      // Every user the same proxy IP reached, refused or not: the lure's reach
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d) and IPAddress in ("<proxy ip>")
+      | summarize Attempts=count(), Results=make_set(ResultType), First=min(TimeGenerated) by UserPrincipalName
+      | order by First asc
+    tested: null
+    attack:
+      - "T1557"
+      - "T1566.002"
+  - id: "identity-breach-response/proposed/activity-after-revocation-through-an-application-s-own-session-cookie"
+    status: "active"
+    source: "Microsoft Learn 'Revoke user access in an emergency in Microsoft Entra ID', section Session tokens (cookies); contradicts T-Minus365 gNflVkmr6RA claim (t=4:53) that revocation ends the session 'immediately' (distill 2026-10-25)"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Defender XDR / Sentinel"
+    title: "Activity after revocation through an application's own session cookie"
+    why: "revokeSignInSessions ends the session cookies and refresh tokens that Entra issued. Once a browser app has issued its own session token, the application controls access, and Microsoft documents that Entra cannot directly revoke an app-issued session token. The app may not send the user back to Entra while that token is valid. Access tokens the attacker already holds also outlive the revocation: 60–90 minutes by default, and up to 28 hours on CAE-capable clients unless CAE pushed the revocation. Activity from the attacker's IP in a browser workload with no new Entra sign-in row is therefore a still-valid access token while inside that window, and only after it can it be a surviving app session rather than a missed device or grant. End it in the app (sign the user out of all sessions in that service) or wait for the app token to expire, and say which in the containment record. Ruled out when the post-revocation activity has a fresh Entra sign-in behind it, which points back to the existing device, grant or refresh-token checks."
+    how: null
+    fp: "Access tokens already issued keep working until they expire (60–90 minutes by default), so activity from the user's own devices and usual IP soon after revocation is expected. Delegates on the mailbox and service accounts acting on it also produce post-revocation activity with no sign-in by the user; check the actor before calling it a surviving session."
+    query: |-
+      let revoked = datetime(<revocation time, UTC>);
+      // Workload activity for the account after the revocation, per app and IP
+      CloudAppEvents
+      | where Timestamp > revoked and AccountObjectId == "<object id>"
+      | summarize Actions=count(), First=min(Timestamp), Last=max(Timestamp), Types=make_set(ActionType, 20)
+          by Application, IPAddress, UserAgent
+      | order by First asc
+      // Entra sign-ins after the revocation: an IP above with activity but no sign-in here, past the access-token lifetime, is a surviving app session
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > revoked and UserPrincipalName =~ "<upn>" and ResultType == "0"
+      | summarize SignIns=count(), First=min(TimeGenerated) by IPAddress, AppDisplayName
+    tested: null
+    attack:
+      - "T1550.004"
+      - "T1539"
+  - id: "identity-breach-response/proposed/empty-or-detail-less-identity-protection-view-on-free-and-p1-tenants-is-a-licenc"
+    status: "active"
+    source: "Microsoft Learn 'Microsoft Entra licensing' (ID Protection capability table) and 'What are risk detections?'; corrects T-Minus365 WCdTaKVQmzI (t=18:28) licensing statement (distill 2026-10-25)"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 2 · MFA"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Empty or detail-less Identity Protection view on Free and P1 tenants is a licence limit, not a clean result"
+    why: "On Entra ID Free and P1, the Risky users report shows only medium- and high-risk users, with no detail drawer or risk history. Most risk detections arrive as 'Additional risk detected' without details, and risk-based Conditional Access policies need P2. On these tenants an empty or vague risk view does not rule out compromise: read the sign-in logs directly (IP, ASN, device id, how MFA was satisfied). Ruled out only on a P2 tenant where full detections are visible for the window."
+    how: null
+    fp: "On a P2 tenant a quiet risk view for the window is a real negative; confirm the licence before reading anything into it. On Free and P1, medium- and high-risk users do still appear, so a listed user is a real lead; it is the absence of a user that proves nothing."
+    query: |-
+      // Is Identity Protection detail available? "hidden" risk levels mean the tenant is not on P2: an empty risk view proves nothing
+      SigninLogs
+      | where TimeGenerated > ago(30d) and UserPrincipalName =~ "<upn>"
+      | summarize SignIns=count() by RiskLevelDuringSignIn, RiskLevelAggregated
+      // Detections that did arrive: RiskEventType "generic" is "Additional risk detected" with the detail withheld on Free/P1
+      // This table only fills if user risk events are exported to the workspace; check the diagnostic setting before reading an empty result
+      AADUserRiskEvents
+      | where TimeGenerated > ago(30d) and UserPrincipalName =~ "<upn>"
+      | summarize Detections=count(), First=min(TimeGenerated), IPs=make_set(IpAddress, 10) by RiskEventType, RiskLevel
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "identity-breach-response/proposed/entra-backup-and-recovery-difference-report-as-an-inventory-of-tenant-changes-an"
+    status: "active"
+    source: "Microsoft Learn 'Microsoft Entra Backup and Recovery overview', 'Recover objects', 'Create and review difference reports'; discovered via T-Minus365 uGXvEHO9NAw (t=7:05-10:05 demo; video's '5-day' window and hard-delete opening scenario contradicted by current docs; distill 2026-10-25)"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 8 · Tenant changes"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Entra Backup and Recovery: difference report as an inventory of tenant changes, and its limits"
+    why: "Entra Backup and Recovery takes one backup a day and keeps up to seven days. A difference report against a backup that predates the first malicious activity lists every supported object created, modified, soft-deleted or restored since then: users, groups, apps, service principals, Conditional Access policies, named locations, the authentication methods policy and the authorization policy. That is a complete inventory of attacker changes to those objects, and recovery can roll back the supported properties (for example a disabled CA policy and an added exclusion) in one job. It does not apply when the first malicious change is more than seven days old (there is no clean backup), when objects were hard-deleted (they cannot be recovered or recreated), for properties outside the supported set (recovery is per property, not whole objects), or on tenants without P1/P2. Only one difference report or recovery job runs at a time. The report also lists every legitimate change, so match it against change records before recovering. Global Administrator includes Backup Administrator, so an attacker could start a recovery that reverses containment; recovery jobs in the audit log during the incident that IR did not start are a lead (an inference, not documented attacker behaviour)."
+    how: null
+    fp: "Every legitimate change since the backup is in the difference report too: group membership churn from joiners and leavers, Conditional Access edits by the identity team, Entra Connect sync writes. Match each changed object against the change log and the actor in the audit log before recovering it. A recovery job started by the response team is not a lead; one started from an account under investigation is."
+    query: |-
+      // Backup and Recovery actions in the window. Microsoft documents that recovery actions are audited but not their
+      // operation names: this filter is deliberately broad; confirm the names in a test tenant and narrow it
+      AuditLogs
+      | where TimeGenerated between (datetime(<window start>) .. datetime(<window end>))
+      | where OperationName contains "recover" or OperationName contains "restore" or OperationName contains "backup" or LoggedByService contains "Backup"
+      | project TimeGenerated, LoggedByService, Category, OperationName, Result, Actor=tostring(InitiatedBy.user.userPrincipalName),
+          ActorIP=tostring(InitiatedBy.user.ipAddress), App=tostring(InitiatedBy.app.displayName), TargetResources
+      | order by TimeGenerated asc
+      // The difference report itself is not in Log Analytics: create it in the Entra admin center (Backup and recovery) or through
+      // the Microsoft Graph Backup and Recovery API, against the last backup taken before the first malicious activity
+    tested: null
+    attack:
+      - "T1556.009"
+      - "T1098.001"
+      - "T1136.003"
+steps:
+  - ord: 1
+    time: "T+0–2 min"
+    title: "Disable the account"
+    why: "Blocks every new token issuance and is a CAE critical event, so CAE-capable clients (Office, Teams, OneDrive, Edge) lose access within minutes instead of at token expiry. The user is locked out; that is the point. Hybrid: Entra refuses AccountEnabled on a synced user. Disable in AD and force a delta sync. With password hash sync the attacker holds the on-premises password too, so the AD reset at Hour 4–24 is not optional; with pass-through authentication the AD disable is the only disable there is."
+    critical: true
+  - ord: 2
+    time: "T+2–4 min"
+    title: "Revoke all sessions, then confirm the user compromised"
+    why: "Invalidates every refresh token and session cookie issued to the identity, for public and confidential clients alike. It does not recall access tokens already issued: those live 60–90 minutes by default, and up to 28 hours on a CAE client that has not received the critical event. \"Confirm compromised\" sets user risk to high so risk-based Conditional Access fires on any sign-in that gets through; against residential-proxy sources an IP block cannot keep up with, this is the control that holds."
+    critical: true
+  - ord: 3
+    time: "T+4–6 min"
+    title: "Record, then remove, attacker-added MFA methods and Temporary Access Passes"
+    why: "The attacker may have enrolled their own authenticator, phone or a TAP. List every method with its id, export the list, then remove with the per-type cmdlet; there is no generic remove. Remove what was added inside the exposure window (date it from the \"User registered security info\" and \"Admin registered security info\" audit events); the user's original methods stay until the Hour 4–24 re-enrolment."
+    critical: true
+  - ord: 4
+    time: "T+6–8 min"
+    title: "Disable attacker device registrations (PRT persistence)"
+    why: "A registered device produces a Primary Refresh Token for silent SSO across the tenant; a session revocation does not unregister it. Any device registered or joined during the exposure window is suspect. Use registered devices, not owned ones: the attacker's device can list the user as a registered user without being owned. Disable now, snapshot the objects (T+12–15), delete after the case closes."
+    critical: true
+  - ord: 5
+    time: "T+8–10 min"
+    title: "Revoke OAuth grants and app-role assignments made in the exposure window; disable the service principal first"
+    why: "A consented app keeps access independent of the user's password, sessions and devices. Graph ignores oAuth2PermissionGrant.startTime (it is normally 0001-01-01), so a date filter on the grant object returns nothing: date the consent from the audit log. Export first. Disable the service principal before deleting anything: removing the grant alone leaves the app's existing refresh token working until it next needs a new one, and deleting the SP destroys the grant records you have not exported. The app registration itself lives in the attacker's tenant; what you control is the service principal in yours. If the app id is in the FOCI family, one refresh token also serves Office, Teams, Outlook, OneDrive, Azure CLI and Azure PowerShell: hunt those app ids from the attacker IP (Stage 9, Defender tab)."
+    critical: true
+  - ord: 6
+    time: "T+10–12 min"
+    title: "Export, then purge inbox rules, forwarding and delegation"
+    why: "The persistence that survives everything above. Rules created in Outlook or OWA are logged as UpdateInboxRules in the mailbox audit, not as New-InboxRule; hunt both. Export before removing: the rule names and conditions are the signature for the tenant-wide hunt, and the export is evidence. Check Full Access and Send As delegation on the mailbox, and transport rules at tenant level, in the same pass."
+    critical: true
+  - ord: 7
+    time: "T+12–15 min"
+    title: "Export first: sign-in, audit and unified audit logs, message trace, mailbox hold, device objects"
+    why: "Retention is shorter than the case. Entra sign-in and audit logs: 30 days on P1/P2, 7 on Free, unless the diagnostic setting ships them to Log Analytics. Unified audit log: 180 days (Audit Standard) or one year (Premium). Microsoft Graph activity: nothing is kept unless the MicrosoftGraphActivityLogs diagnostic setting is on. Message trace: 90 days, 10 days per query. Put the mailbox on litigation hold before any purge so deleted phish and rule-created folders stay recoverable, and snapshot the device objects before anyone deletes them."
+    critical: true
+  - ord: 8
+    time: "T+0–15 min, in parallel"
+    title: "Can you rule out spread? If not, go broad"
+    why: "Three quick checks decide whether one account is the whole scope: (a) did this account send internal mail during the access window, (b) does it hold or is it eligible for an admin role, (c) are other accounts signing in from the attacker's IP or user agent? If any answer is yes or unknown, contain at the wider level now, not after the investigation: disable and revoke every internal recipient who clicked (Stage 5), disable and revoke all privileged accounts if a role was in reach, and block the attacker's source in Conditional Access tenant-wide with the break-glass accounts excluded. Broad containment costs some user friction; narrow containment against a wider attacker costs the eviction."
+    critical: true
+actions:
+  - platform: "Defender XDR / Sentinel"
+    label: "T+0–15 · Contain"
+    name: "Disable, then revoke, every account in scope at once; confirm compromised"
+    tier: "destructive"
+    tier_inferred: false
+    why: "disabling blocks new tokens and is a CAE critical event; revoking kills the refresh tokens and cookies the attacker already holds. In that order, so there is no gap in which the still-valid password mints a fresh session. One account at a time warns the attacker while a second account stays live."
+    how: "Portal, per user: identity page › Disable / Revoke session / Mark as compromised. From an advanced hunting result: Take actions › Disable user (the query must return AccountObjectId). Defender for Cloud Apps: Suspend user, and Revoke app for a consented OAuth app. Synced users: Entra refuses AccountEnabled on them; disable in AD and run Start-ADSyncSyncCycle -PolicyType Delta, then revoke in Entra. With password hash sync the attacker holds the on-premises password too: reset it in AD. For the whole list, script it:"
+    body: |-
+      $scope = Get-Content .\accounts-in-scope.txt   # one UPN per line
+      foreach ($u in $scope) {
+        Update-MgUser -UserId $u -AccountEnabled:$false            # first: no new tokens; CAE clients drop within minutes
+        Revoke-MgUserSignInSession -UserId $u                      # then: refresh tokens and session cookies gone
+        Confirm-MgRiskyUserCompromised -UserIds (Get-MgUser -UserId $u).Id   # Identity Protection: risk high, risk policies fire
+      }
+    attack: []
+  - platform: "Defender XDR / Sentinel"
+    label: "T+0–15 · Contain"
+    name: "Block the attacker's source tenant-wide, with the break-glass accounts excluded"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a blocked source stops the same infrastructure reaching any other account while you are still scoping. Against residential-proxy kits the block buys hours, not days; \"Confirm compromised\" plus a user-risk policy is what holds."
+    how: "Entra: Conditional Access › Named locations › add the attacker IPs, then a block policy for that location, all users, with the break-glass accounts excluded: an IP block that catches your own emergency access is the outage you cannot fix. On devices: Settings › Endpoints › Indicators › IP addresses (enforcement needs network protection in block mode), or via the API:"
+    body: |-
+      POST https://api.security.microsoft.com/api/indicators
+      {"indicatorValue": "<attacker IP>", "indicatorType": "IpAddress", "action": "Block",
+       "title": "IR case #<n>", "description": "Attacker source, identity breach", "expirationTime": "<ISO date>"}
+    attack: []
+  - platform: "Defender XDR / Sentinel"
+    label: "T+0–15 · Contain"
+    name: "Isolate every victim device (infostealer or cookie theft)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a device that is still stealing tokens re-compromises the account the moment it is re-enabled."
+    how: "Device page › Isolate device (Full); Live Response keeps working. The API isolates one device per call — run it for each device in scope:"
+    body: |-
+      POST https://api.security.microsoft.com/api/machines/{id}/isolate
+      {"Comment": "IR case #<n>", "IsolationType": "Full"}
+    attack: []
+  - platform: "Defender XDR / Sentinel"
+    label: "Day 1–7 · Forensics"
+    name: "Collect volatile data and a persistence snapshot, then rebuild the device"
+    tier: "write"
+    tier_inferred: false
+    why: "the infection route and the token store live in RAM and the browser profile; once they are collected, a rebuild is the only way to be sure the stealer is gone."
+    how: "Device page › Collect investigation package. For RAM, pagefile and the browser's live state, push Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d with Live Response: putfile it from the library, run a one-line wrapper script that starts it elevated, getfile the output. Then Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df with -Zip (read-only; -CompareTo diffs against a baseline). Rebuild from a known-good image; release isolation only after the rebuild and after the Hour 1–4 check shows nothing since the revocation time."
+    body: ""
+    attack:
+      - "T1555.003"
+  - platform: "CrowdStrike Falcon"
+    label: "T+0–15 · Contain"
+    name: "Disable and revoke every account in scope — in Entra"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Falcon doesn't disable Entra accounts or revoke their tokens; the account side of the containment happens in Entra, for all accounts at once, disable before revoke."
+    how: "Run the T+0–15 commands for every account in scope, and block the attacker's source in Conditional Access with the break-glass accounts excluded. Falcon Fusion SOAR can call Entra actions through its Microsoft Entra ID integration; check the action names and Graph permissions in your console before relying on it."
+    body: ""
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "T+0–15 · Contain"
+    name: "Contain every victim device in one call (infostealer or cookie theft)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a device that is still stealing tokens re-compromises the account the moment it is re-enabled."
+    how: "Host management › select the hosts › Network contain; RTR keeps working on a contained host. The API takes up to 100 host IDs per request:"
+    body: |-
+      POST /devices/entities/devices-actions/v2?action_name=contain
+      {"ids": ["<AID-1>", "<AID-2>"]}
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "Day 1–7 · Forensics"
+    name: "Collect before you stop anything (RTR)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the stealer binary, its process state and the browser's token store are the evidence for the infection route. Push the collectors with put from the RTR file library and fetch the output with get."
+    how: "Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d for RAM, pagefile, processes and triage files; Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df with -Zip for a read-only persistence snapshot with chain of custody."
+    body: |-
+      ps
+      netstat
+      put MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      put Get-PersistenceSnapshot.ps1
+      runscript -Raw=```Start-Process .\MagnetRESPONSEv172_Self_Extracting_Archive.exe -Wait; .\Get-PersistenceSnapshot.ps1 -Zip```
+      get C:\path\to\infostealer.exe
+      get <collector output zip>
+    attack:
+      - "T1555.003"
+  - platform: "CrowdStrike Falcon"
+    label: "Day 1–7 · Forensics"
+    name: "Stop it running, then rebuild the device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "killing the process stops the theft; only a rebuild proves the device is clean. Lift containment after the rebuild and after the Hour 1–4 check is clean."
+    how: null
+    body: "kill <pid>"
+    attack: []
+  - platform: "SentinelOne"
+    label: "T+0–15 · Contain"
+    name: "Disable and revoke every account in scope — in Entra"
+    tier: "destructive"
+    tier_inferred: false
+    why: "SentinelOne doesn't disable Entra accounts or revoke their tokens; the account side of the containment happens in Entra, for all accounts at once, disable before revoke."
+    how: "Run the T+0–15 commands for every account in scope, and block the attacker's source in Conditional Access with the break-glass accounts excluded."
+    body: ""
+    attack: []
+  - platform: "SentinelOne"
+    label: "T+0–15 · Contain"
+    name: "Disconnect every victim device in one call (infostealer or cookie theft)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a device that is still stealing tokens re-compromises the account the moment it is re-enabled."
+    how: "Sentinels › select the endpoints › Actions › Disconnect from network; the management connection stays up. The API takes a filter, so one call covers the whole list:"
+    body: |-
+      POST /web/api/v2.1/agents/actions/disconnect
+      {"filter": {"ids": ["<agent-id-1>", "<agent-id-2>"]}}
+    attack: []
+  - platform: "SentinelOne"
+    label: "Day 1–7 · Forensics"
+    name: "Collect before you stop anything"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the stealer binary, RAM and the browser profile show how the tokens left."
+    how: "Remote Shell (PowerShell): Get-Process, Get-NetTCPConnection. RemoteOps: push Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d as a script-library binary and run it elevated for RAM, pagefile and triage files; run Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df with -Zip as a RemoteOps PowerShell script. Fetch Files: the collector output, the infostealer binary and the browser profile."
+    body: ""
+    attack:
+      - "T1555.003"
+  - platform: "SentinelOne"
+    label: "Day 1–7 · Forensics"
+    name: "Stop it running, then rebuild the device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Kill and Quarantine stop the theft; only a rebuild proves the device is clean. Reconnect after the rebuild and after the Hour 1–4 check is clean."
+    how: "Threat › Mitigation › Kill, Quarantine."
+    body: ""
+    attack: []
+  - platform: "Velociraptor"
+    label: "T+0–15 · Contain"
+    name: "Disable and revoke every account in scope — in Entra"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Velociraptor acts only on endpoints; the account side of the containment happens in Entra, for all accounts at once, disable before revoke."
+    how: "Run the T+0–15 commands for every account in scope, and block the attacker's source in Conditional Access with the break-glass accounts excluded."
+    body: ""
+    attack: []
+  - platform: "Velociraptor"
+    label: "T+0–15 · Contain"
+    name: "Quarantine every victim device with one hunt (infostealer or cookie theft)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a device that is still stealing tokens re-compromises the account the moment it is re-enabled."
+    how: "Label the victim devices, then Hunt Manager › New Hunt, include that label, artifact Windows.Remediation.Quarantine. It applies a firewall policy that only allows the Velociraptor server; the same artifact with RemovePolicy set lifts it."
+    body: ""
+    attack: []
+  - platform: "Velociraptor"
+    label: "Day 1–7 · Forensics"
+    name: "Collect before you stop anything"
+    tier: "destructive"
+    tier_inferred: false
+    why: "RAM, running processes, connections and the browser's extensions and history show how the tokens left. Collect in this order; the memory image first, before anything on the host changes."
+    how: "Windows.Memory.Acquisition for RAM, then the artifacts below. For a persistence snapshot with chain of custody, add Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df as a server tool and run it with Windows.System.PowerShell ( -Zip; -CompareTo against a baseline). Where the case needs the Magnet output format, run Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d elevated from removable media on the console."
+    body: |-
+      Windows.Memory.Acquisition
+      Windows.System.Pslist
+      Windows.Network.NetstatEnriched
+      Windows.Applications.Chrome.Extensions
+      Windows.Applications.Chrome.History
+      Windows.KapeFiles.Targets   (Target = KapeTriage)
+    attack:
+      - "T1555.003"
+  - platform: "Velociraptor"
+    label: "Day 1–7 · Rebuild"
+    name: "Rebuild the device, then lift the quarantine"
+    tier: "destructive"
+    tier_inferred: false
+    why: "only a rebuild proves the stealer is gone. Lift the quarantine after the rebuild and after the Hour 1–4 check is clean."
+    how: null
+    body: ""
+    attack: []
+  - platform: "Splunk"
+    label: "T+0–15 · Contain"
+    name: "Hand the scope to the tools that act"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the hunts above give you the full list of accounts, sources and devices; containment has to cover all of them at once."
+    how: "Accounts and attacker sources: the T+0–15 Entra commands and a Conditional Access block with the break-glass accounts excluded. Victim devices: isolate them with your EDR (see its tab). With Splunk SOAR, a playbook can run the Entra and EDR actions for the whole list."
+    body: ""
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "T+0–15 · Contain"
+    name: "Disable and revoke every account in scope — in Entra"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Elastic and Wazuh are for hunting here; the account side of the containment happens in Entra, for all accounts at once, disable before revoke."
+    how: "Run the T+0–15 commands for every account in scope, and block the attacker's source in Conditional Access with the break-glass accounts excluded."
+    body: ""
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "T+0–15 · Contain"
+    name: "Isolate every victim device in one call (infostealer or cookie theft)"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a device that is still stealing tokens re-compromises the account the moment it is re-enabled."
+    how: "Elastic Defend: host › Take action › Isolate host, or isolate in the response console. The API takes up to 250 endpoint IDs per call. Wazuh: an isolation active-response script run through PUT /active-response — Wazuh ships no isolation script, so write and test one before you need it."
+    body: |-
+      POST /api/endpoint/action/isolate
+      {"endpoint_ids": ["<endpoint-id-1>", "<endpoint-id-2>"], "comment": "IR case #<n>"}
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "Day 1–7 · Forensics"
+    name: "Collect, stop it running, then rebuild the device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "list the processes and collect RAM and a persistence snapshot first, for the record; killing the stealer stops the theft, and only a rebuild proves the device is clean. Release isolation after the rebuild and after the Hour 1–4 check is clean."
+    how: "Response console: upload then execute for Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d (RAM, pagefile, processes, triage files) and Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df ( -Zip for chain of custody); get-file the output."
+    body: |-
+      processes
+      upload --file MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      upload --file Get-PersistenceSnapshot.ps1
+      execute --command "MagnetRESPONSEv172_Self_Extracting_Archive.exe" --timeout 30m
+      execute --command "powershell -ExecutionPolicy Bypass -File Get-PersistenceSnapshot.ps1 -Zip"
+      get-file --path <collector output zip>
+      kill-process --pid <pid>
+    attack:
+      - "T1555.003"

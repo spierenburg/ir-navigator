@@ -1,0 +1,26 @@
+{
+  "name": "ir-navigator",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Evidence-indexed IR criteria store and MCP server. Surfaces judgment criteria with their falsifiers; never decides.",
+  "scripts": {
+    "build:index": "bun run src/index/build.ts",
+    "build:coverage": "bun run src/coverage/build.ts",
+    "start": "bun run src/server.ts",
+    "review": "bun run src/review.ts",
+    "eval": "bun run src/eval.ts",
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.0.6",
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

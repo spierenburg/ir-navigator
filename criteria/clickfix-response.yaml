@@ -1,0 +1,2032 @@
+# Source of truth for this playbook's IR criteria.
+# Hand-edit freely. Re-run 'bun run build:index' after any change.
+playbook: "clickfix-response"
+title: "ClickFix Response"
+platforms:
+  - "Defender XDR / Sentinel"
+  - "CrowdStrike Falcon"
+  - "SentinelOne"
+  - "Velociraptor"
+  - "Splunk"
+  - "Elastic / Wazuh"
+scenarios:
+  - id: "1"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Win+R (Run dialog)"
+    indicators: "explorer.exe starting PowerShell, cmd, mshta, curl, certutil, bitsadmin or msiexec with a public URL and the trailing lure comment; a new RunMRU value."
+    discriminator: "RunMRU holds the command, but only when the launch succeeded (a failed launch writes nothing) and only until the stager clears it — a wiped RunMRU on a host whose Timeline clipboard record holds the command is itself a finding. Block Win+R for non-technical users after the incident."
+    attack: []
+  - id: "2"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Win+X / Terminal"
+    indicators: "Windows Terminal or PowerShell started by the user, then PowerShell itself fetching the stager (no new process for the paste), or mshta, curl or msiexec as children of powershell.exe; nothing in RunMRU."
+    discriminator: "The paste runs inside the already-open shell, so the command is in the PowerShell history file ( ConsoleHost_history.txt ), in event 4104 (the decoded block) and in event 400's HostApplication, not in RunMRU and often not as a separate process. Detections written for an explorer.exe parent do not fire here."
+    attack: []
+  - id: "3"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "FileFix (Explorer address bar)"
+    indicators: "the lure opens a file-picker or \"open file location\" prompt; explorer.exe starts PowerShell or cmd with a command line that ends in a fake path comment such as # C:\\Company\\Internal\\Policy.pdf; a new value under HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\TypedPaths, nothing in RunMRU."
+    discriminator: "The user pastes into the File Explorer address bar, which executes commands the way Run does; the path at the end is padding so the visible part of the bar looks like a file. Collect TypedPaths and the clipboard record, and extend any Win+R detection that keys on RunMRU to TypedPaths."
+    attack: []
+  - id: "4"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Download-folder staging and HTA save-as"
+    indicators: "a file created in Downloads by the browser, and minutes later a pasted command that only runs that local file; or mshta.exe started by chrome.exe, msedge.exe or explorer.exe on a.hta the lure told the user to \"save as\"."
+    discriminator: "The command looks harmless, or there is no command at all; the payload is the downloaded file. Collect it and its Zone.Identifier stream, which records the URL it came from and the referrer (Sysmon 15 logs the same contents fleet-wide). In the HTA variant the parent of mshta.exe is the browser, not explorer.exe or a shell."
+    attack: []
+  - id: "5"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "macOS (Terminal)"
+    indicators: "Terminal started by the user, then curl or bash -c fetching a script, osascript prompting for the password, a new binary under /tmp, ~/Library or /Users/Shared; Atomic Stealer (AMOS) is the usual payload."
+    discriminator: "The pasted line is curl -fsSL <url> | bash or a base64 echo | base64 -d | sh. It is in ~/.zsh_history (written on shell exit, so collect after the user closes Terminal or read it from the EDR's process events), the stealer's osascript password dialog is in the process tree, and the Keychain, browser profiles and ~/.ssh are what it takes. Revoke and reset as for Windows; the Keychain password is the login password, so the reset is the Keychain rotation."
+    attack: []
+  - id: "6"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Linux"
+    indicators: "a shell started by the user, then curl or wget piped to sh or bash, a new file under /tmp, /dev/shm or ~/.config, a new cron entry, systemd user unit or ~/.ssh/authorized_keys line."
+    discriminator: "Rare, and aimed at developers and admins: the paste is a \"dependency fix\" or a fake CAPTCHA served to a Linux user agent. ~/.bash_history is written on exit; auditd execve records or the EDR's process events have it live. Run get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67 for cron, systemd, SSH keys, PAM, ld.so.preload and SUID in one pass, and --compare-to a clean host."
+    attack: []
+criteria:
+  - id: "clickfix-response/defender/s1-which-page-served-the-lure-and-who-else-clicked"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Which page served the lure, and who else clicked it"
+    why: "The lure URL is the durable indicator and the provenance question (SEO result, ad, compromised site, mail link) decides who else you report it to. UrlClickEvents only sees links in mail, Teams and Office; a search or ad lure leaves its trace in the browser's connections just before the paste."
+    how: null
+    fp: "Five minutes of browser traffic is ads, CDNs and telemetry; read it bottom-up from the paste time and stop at the first domain the user does not recognise. RemoteUrl is empty for many connections; fall back to RemoteIP and the proxy."
+    query: |-
+      // Mail or Teams link (Defender for Office 365 Safe Links; Workload says which)
+      UrlClickEvents
+      | where Timestamp > ago(30d) and Url has "<lure domain>"
+      | project Timestamp, AccountUpn, Url, ActionType, IsClickedThrough, Workload, NetworkMessageId
+      // What the browser reached in the five minutes before the paste on the reporting host
+      DeviceNetworkEvents
+      | where DeviceName == "<host>" and Timestamp between ((datetime(<paste time>) - 5m) .. datetime(<paste time>))
+      | where InitiatingProcessFileName in~ ("chrome.exe","msedge.exe","firefox.exe","brave.exe") and isnotempty(RemoteUrl)
+      | project Timestamp, RemoteUrl, RemoteIP, InitiatingProcessFileName
+      | order by Timestamp asc
+      // The referrer of anything the browser saved to Downloads (download-folder and HTA variants)
+      DeviceFileEvents
+      | where DeviceName == "<host>" and Timestamp > ago(7d) and FolderPath has @"\Downloads\" and isnotempty(FileOriginUrl)
+      | project Timestamp, FileName, FileOriginUrl, FileOriginReferrerUrl, InitiatingProcessFileName
+    tested: null
+    attack:
+      - "T1189"
+      - "T1566.002"
+  - id: "clickfix-response/defender/s2-the-pasted-command-from-the-run-dialog-the-explo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "The pasted command, from the Run dialog, the Explorer address bar or a terminal"
+    why: "This is the pasted command itself. Per-visitor obfuscation means the command and its URLs are your indicators, not a vendor hash. The strongest single signature is the trailing lure comment ( # I am not a robot, # reCAPTCHA Verification ID, # Ray ID, or a fake # C:\\...\\file.pdf path in FileFix); the flags and LOLBins catch the rest. Win+R and FileFix start the child from explorer.exe; a paste into an already-open PowerShell window runs in-process, so there the evidence is the child it spawns, 4104 (next hunt) or the history file."
+    how: null
+    fp: "Admin tooling, Intune remediation scripts and installers use -nop -w hidden -ep bypass from explorer.exe daily; the lure comment, a public URL and a non-technical user together are the hit. Exclude your management agents by InitiatingProcessFileName or signer, not by flag."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp > ago(7d)
+      | where InitiatingProcessFileName in~ ("explorer.exe","windowsterminal.exe","powershell.exe","pwsh.exe","cmd.exe","conhost.exe")
+      | where FileName in~ ("powershell.exe","pwsh.exe","cmd.exe","mshta.exe","curl.exe","msiexec.exe","certutil.exe","bitsadmin.exe",
+                            "regsvr32.exe","rundll32.exe","wscript.exe","cscript.exe","conhost.exe","finger.exe","ssh.exe")
+      | where ProcessCommandLine has_any ("http","-enc","-e ","-ec ","iex","invoke-expression","downloadstring","downloadfile","irm","iwr",
+                                          "-w hidden","-w 1","-nop","-noprofile","-ep bypass","-executionpolicy bypass",
+                                          "urlcache","-decode","/transfer","--headless","proxycommand","/i:http","scrobj","javascript:","frombase64string")
+            or ProcessCommandLine matches regex @"(?i)#\s*(I am not a robot|reCAPTCHA|Ray ID|Verification|Cloudflare|robot|[A-Z]:\\[^""]+\.(pdf|docx|txt))"
+      | project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine
+      // HTA save-as: the browser or Explorer launches a .hta the user just saved
+      DeviceProcessEvents
+      | where Timestamp > ago(7d) and FileName =~ "mshta.exe"
+      | where InitiatingProcessFileName in~ ("chrome.exe","msedge.exe","firefox.exe","brave.exe","explorer.exe") and ProcessCommandLine has_any (@"\Downloads\", ".hta")
+      | project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, ProcessCommandLine
+      // Win+R writes RunMRU and FileFix writes TypedPaths. Neither key is guaranteed to be in the curated set DeviceRegistryEvents records;
+      // test on one host, and otherwise read them with Live Response (Capture, below).
+      DeviceRegistryEvents
+      | where Timestamp > ago(7d) and RegistryKey has_any (@"\Explorer\RunMRU", @"\Explorer\TypedPaths")
+      | project Timestamp, DeviceName, RegistryKey, RegistryValueName, RegistryValueData
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1059.001"
+      - "T1218.005"
+  - id: "clickfix-response/defender/s2-download-folder-staging-a-browser-download-run-m"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Download-folder staging: a browser download run minutes later from a pasted command"
+    why: "In this variant the pasted command is harmless on its own and the payload is the file the browser just saved; the pairing is the finding and FileOriginUrl on the download is the lure's download host."
+    how: null
+    fp: "Users run installers from Downloads all day. A hit matters when the download is a script, an archive or an.hta, the command came from Run or a terminal rather than a double-click, or DownloadUrl is not a vendor site."
+    query: |-
+      let dl = DeviceFileEvents
+      | where Timestamp > ago(7d) and ActionType == "FileCreated" and FolderPath has @"\Downloads\"
+      | where InitiatingProcessFileName in~ ("chrome.exe","msedge.exe","firefox.exe","brave.exe")
+      | project DeviceName, DownloadedFile = FileName, DownloadUrl = FileOriginUrl, DlTime = Timestamp;
+      DeviceProcessEvents
+      | where Timestamp > ago(7d) and InitiatingProcessFileName in~ ("explorer.exe","windowsterminal.exe","powershell.exe","cmd.exe")
+      | join kind=inner dl on DeviceName
+      | where Timestamp between (DlTime .. (DlTime + 10m)) and ProcessCommandLine has DownloadedFile
+      | project Timestamp, DeviceName, AccountName, DownloadedFile, DownloadUrl, FileName, ProcessCommandLine
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1204.002"
+  - id: "clickfix-response/defender/s3-the-decoded-stager-4104-script-block-text-powers"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Stage 2"
+    stage_ord: 3
+    platform: "Defender XDR / Sentinel"
+    title: "The decoded stager (4104 script-block text, PowerShellCommand) and LOLBin loaders from user paths"
+    why: "The command line only shows the obfuscated outer layer. Script-block logging (event 4104) records the decoded text PowerShell actually ran, including the stage-2 URL; Windows writes 4104 at Warning level for suspicious blocks even when the policy is off. Advanced hunting carries a slimmer record of the cmdlets as PowerShellCommand events; the full 4104 text needs Sentinel with a DCR on the PowerShell/Operational channel."
+    how: null
+    fp: "Configuration-management and software-deployment agents run these cmdlets constantly; exclude them by InitiatingProcessCommandLine and keep the rest. A 4104 block over a few KB of base64 or [char] arithmetic is the stager even if every cmdlet in it looks ordinary."
+    query: |-
+      DeviceEvents
+      | where Timestamp > ago(7d) and ActionType == "PowerShellCommand"
+      | extend Command = tostring(parse_json(AdditionalFields).Command)
+      | where Command has_any ("Invoke-WebRequest","Invoke-RestMethod","Invoke-Expression","DownloadString","DownloadFile","FromBase64String",
+                               "Start-BitsTransfer","Expand-Archive","Add-MpPreference","Set-MpPreference","Start-Process")
+      | project Timestamp, DeviceName, InitiatingProcessAccountName, InitiatingProcessCommandLine, Command
+      // Sentinel, PowerShell/Operational forwarded by a DCR: the decoded block itself
+      Event
+      | where TimeGenerated > ago(7d) and EventLog == "Microsoft-Windows-PowerShell/Operational" and EventID == 4104
+      | extend ScriptBlockText = extract(@"<Data Name=""ScriptBlockText"">([\s\S]*?)</Data>", 1, EventData)
+      | where ScriptBlockText has_any ("DownloadString","Invoke-WebRequest","iwr","irm","FromBase64String","-join","[char]","Add-MpPreference")
+      | project TimeGenerated, Computer, ScriptBlockText
+      // Loaders started from user-writable paths after the paste
+      DeviceProcessEvents
+      | where Timestamp > ago(7d)
+      | where (FileName in~ ("mshta.exe","regsvr32.exe","rundll32.exe") and ProcessCommandLine has_any ("http", @"\AppData\", @"\Temp\", @"\Downloads\", @"\ProgramData\"))
+           or (FileName in~ ("curl.exe","certutil.exe","bitsadmin.exe") and ProcessCommandLine has_any (@"\AppData\", @"\Temp\", @"\Downloads\", @"\ProgramData\", "-o ", "-decode", "/transfer"))
+           or (FileName =~ "msiexec.exe" and ProcessCommandLine has_any ("http", @"\AppData\", @"\Temp\", @"\Downloads\"))
+           or (FileName in~ ("powershell.exe","pwsh.exe") and ProcessCommandLine has "Add-MpPreference")
+      | project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine
+    tested: null
+    attack:
+      - "T1059.001"
+      - "T1105"
+      - "T1218.005"
+      - "T1027"
+  - id: "clickfix-response/defender/s4-what-the-stager-left-behind-new-binaries-sideloa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Payload"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "What the stager left behind: new binaries, sideloaded DLLs and injection from user-writable paths"
+    why: "Stealer, loader or RAT decides the rest of the response. Stealers run once from AppData or Temp and exit; loaders and RATs stay resident, sideload a DLL next to a signed binary, or inject into a legitimate process. NetSupport shows up as client32.exe with a client32.ini beside it; Lumma injects into BitLockerToGo.exe or more.com."
+    how: null
+    fp: "Teams, OneDrive, Zoom and other per-user installers live in AppData\\Local and update themselves; a signed Microsoft or vendor ProcessVersionInfoCompanyName with a matching product name is normal. Unsigned, no version info, a random name, or a signed binary whose DLL beside it is unsigned is the payload."
+    query: |-
+      DeviceProcessEvents
+      | where DeviceName == "<host>" and Timestamp > datetime(<paste time>)
+      | where FolderPath has_any (@"\AppData\", @"\Temp\", @"\Downloads\", @"\ProgramData\", @"\Users\Public\")
+      | summarize First = min(Timestamp), Runs = count(), Cmd = any(ProcessCommandLine), Parent = any(InitiatingProcessFileName)
+          by FileName, FolderPath, SHA256, ProcessVersionInfoCompanyName, ProcessVersionInfoProductName
+      | order by First asc
+      // DLLs loaded from user-writable paths by binaries in user-writable paths (sideloading)
+      DeviceImageLoadEvents
+      | where DeviceName == "<host>" and Timestamp > datetime(<paste time>)
+      | where FolderPath has_any (@"\AppData\", @"\Temp\", @"\Downloads\", @"\ProgramData\") and FolderPath !endswith @"\System32\"
+      | summarize Loads = count(), By = make_set(InitiatingProcessFileName) by FileName, FolderPath, SHA1
+      // Injection into a legitimate process
+      DeviceEvents
+      | where DeviceName == "<host>" and Timestamp > datetime(<paste time>) and ActionType == "CreateRemoteThreadApiCall"
+      | project Timestamp, InitiatingProcessFileName, InitiatingProcessFolderPath, FileName, FolderPath
+      // What Defender itself classified
+      AlertInfo | where TimeGenerated > ago(7d) | join AlertEvidence on AlertId | where DeviceName == "<host>"
+      | project TimeGenerated, Title, ThreatFamily, Category, FileName, SHA256
+    tested: null
+    attack:
+      - "T1574.001"
+      - "T1055"
+      - "T1219"
+  - id: "clickfix-response/defender/s5-browser-credential-stores-read-by-something-that"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Theft"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "Browser credential stores read by something that is not the browser; the remote-debugging bypass"
+    why: "Since Chrome 127 (App-Bound Encryption) a stealer cannot decrypt cookies by reading the files, so Lumma, StealC and SectopRAT start the browser themselves with --remote-debugging-port and ask it for the cookies. chrome.exe with that flag and a parent that is not explorer.exe or the browser is theft with few false positives. Copies of Login Data, Cookies, Local State, Firefox key4.db and logins.json outside the profile folder are the older method."
+    how: null
+    fp: "Developers and test automation (Selenium, Playwright, Puppeteer) start Chrome with --remote-debugging-port and --headless from node.exe, python.exe or an IDE; exclude those parents on developer hosts. A stealer that reads the files in place leaves no file event at all; absence here is not absence of theft, and the users who signed in on that host are treated as compromised regardless."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp > ago(7d)
+      | where FileName in~ ("chrome.exe","msedge.exe","brave.exe")
+      | where ProcessCommandLine has_any ("--remote-debugging-port","--remote-debugging-pipe","--remote-allow-origins","--headless","--user-data-dir","--restore-last-session")
+      | where InitiatingProcessFileName !in~ ("explorer.exe","chrome.exe","msedge.exe","brave.exe","svchost.exe","userinit.exe")
+      | project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessFolderPath, ProcessCommandLine
+      // Profile files copied out of the profile (reads are not logged; only a copy or rename shows)
+      DeviceFileEvents
+      | where Timestamp > ago(7d) and ActionType in ("FileCreated","FileRenamed")
+      | where FileName in~ ("Login Data","Cookies","Web Data","Local State","key4.db","logins.json","cookies.sqlite","places.sqlite","wallet.dat")
+      | where FolderPath !has @"\User Data\" and FolderPath !has @"\Firefox\Profiles\"
+      | project Timestamp, DeviceName, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessFolderPath
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1539"
+      - "T1552.001"
+  - id: "clickfix-response/defender/s6-outbound-connections-from-user-path-binaries-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Exfiltration"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "Outbound connections from user-path binaries and script hosts after the paste"
+    why: "A stealer uploads within minutes of running, usually to a plain HTTPS C2, a Telegram bot ( api.telegram.org ) or a Discord webhook; a loader's second connection is the next stage. The first connection after the paste from a process in AppData, Temp or a script host is the upload. DeviceNetworkEvents carries no byte counts; size and duration come from the proxy or firewall."
+    how: null
+    fp: "Teams, OneDrive, Slack and browser updaters in AppData\\Local talk to Microsoft, Slack and Google CDNs; exclude by signer or by destination ASN. Anything to a bare IP, a fresh domain, Telegram or a paste site from a process you cannot name is the upload."
+    query: |-
+      DeviceNetworkEvents
+      | where DeviceName == "<host>" and Timestamp between (datetime(<paste time>) .. (datetime(<paste time>) + 2h))
+      | where ActionType == "ConnectionSuccess" and RemoteIPType == "Public"
+      | where InitiatingProcessFolderPath has_any (@"\AppData\", @"\Temp\", @"\Downloads\", @"\ProgramData\", @"\Users\Public\")
+           or InitiatingProcessFileName in~ ("powershell.exe","pwsh.exe","mshta.exe","curl.exe","rundll32.exe","regsvr32.exe","msbuild.exe","regasm.exe","installutil.exe","bitlockertogo.exe","more.com")
+      | summarize First = min(Timestamp), Connections = count(), Ports = make_set(RemotePort), Urls = make_set(RemoteUrl)
+          by InitiatingProcessFileName, InitiatingProcessFolderPath, RemoteIP
+      | order by First asc
+    tested: null
+    attack:
+      - "T1041"
+      - "T1567"
+      - "T1071.001"
+  - id: "clickfix-response/defender/s7-the-host-s-users-signing-in-from-new-ips-or-netw"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Session reuse"
+    stage_ord: 7
+    platform: "Defender XDR / Sentinel"
+    title: "The host's users signing in from new IPs or networks"
+    why: "Stolen cookies and passwords are used from the attacker's infrastructure, often days later after resale. A replayed cookie is a non-interactive sign-in with no MFA prompt, so query both tables. The window is bounded by the Entra retention (30 d on P1/P2, 7 d free) unless Sentinel keeps the tables longer; export the 30 days now (Capture, below) because resale takes time."
+    how: null
+    fp: "Mobile networks and VPN egress rotate IPs; a new IP in the same ASN and country is usually the user. A new ASN, a hosting provider, an impossible-travel pair, or a sign-in with an empty deviceId where the user's sessions always carry one is the replay."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d)
+      | where UserPrincipalName in~ ("<upn1>", "<upn2>") and ResultType == "0"
+      | summarize FirstSeen = min(TimeGenerated), Count = count(), Apps = make_set(AppDisplayName), Interactive = countif(Type == "SigninLogs")
+          by UserPrincipalName, IPAddress, AutonomousSystemNumber, tostring(DeviceDetail.deviceId)
+      | order by FirstSeen asc
+      // Non-Entra sessions: Google Workspace login audit (Admin console, Reporting > Audit > Login), Okta System Log (eventType user.session.start),
+      // Slack Audit Logs (user_login), GitHub audit log (user.login), AWS CloudTrail ConsoleLogin. Same question: new IP or ASN after the paste.
+    tested: null
+    attack:
+      - "T1550.004"
+      - "T1078.004"
+  - id: "clickfix-response/defender/s8-everything-that-survives-a-reboot-created-after"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Persistence"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Everything that survives a reboot, created after the paste"
+    why: "Persistence means a loader or RAT, not only a stealer: this is a foothold, and the ransomware pre-encryption response applies. Look wider than Run keys: the startup folder, a task imported from XML, a WMI subscription, a new service, a DLL dropped beside a signed binary in AppData, and NetSupport's client32.exe with client32.ini under AppData\\Roaming."
+    how: null
+    fp: "Installers and updaters register tasks, services and Run values legitimately; keep only what was created after the paste time on that host, and anything whose target path is in AppData, Temp or ProgramData. For a full read-only baseline diff run Get-PersistenceSnapshot.ps1 (Capture, below)."
+    query: |-
+      DeviceRegistryEvents
+      | where DeviceName == "<host>" and Timestamp > datetime(<paste time>)
+      | where RegistryKey has_any (@"\CurrentVersion\Run", @"\CurrentVersion\RunOnce", @"\Winlogon", @"\Explorer\Shell Folders", @"\Image File Execution Options")
+      | project Timestamp, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName
+      DeviceFileEvents
+      | where DeviceName == "<host>" and Timestamp > datetime(<paste time>) and ActionType == "FileCreated"
+      | where FolderPath has @"\Start Menu\Programs\Startup\" or FileName in~ ("client32.exe","client32.ini") or (FolderPath has @"\AppData\" and FileName endswith ".dll")
+      | project Timestamp, FolderPath, FileName, SHA256, InitiatingProcessFileName
+      DeviceEvents
+      | where DeviceName == "<host>" and Timestamp > datetime(<paste time>)
+      | where ActionType in ("ScheduledTaskCreated","ServiceInstalled","WmiBindEventFilterToConsumer")
+      | project Timestamp, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, AdditionalFields
+      DeviceProcessEvents
+      | where DeviceName == "<host>" and Timestamp > datetime(<paste time>)
+      | where (FileName =~ "schtasks.exe" and ProcessCommandLine has_any ("/create", "/xml")) or (FileName =~ "sc.exe" and ProcessCommandLine has "create") or FileName =~ "client32.exe"
+      | project Timestamp, FileName, ProcessCommandLine, InitiatingProcessFileName
+    tested: null
+    attack:
+      - "T1547.001"
+      - "T1053.005"
+      - "T1546.003"
+      - "T1543.003"
+      - "T1574.001"
+      - "T1219"
+  - id: "clickfix-response/defender/s9-other-hosts-that-reached-the-lure-or-ran-the-sam"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Spread"
+    stage_ord: 9
+    platform: "Defender XDR / Sentinel"
+    title: "Other hosts that reached the lure or ran the same command shape"
+    why: "ClickFix pages sit on compromised sites and ads; everyone who visited the same page is a candidate victim, and anyone who pasted gets the same command shape with a different obfuscation. Run the stage-2 hunt fleet-wide without the host filter; this one adds the network side."
+    how: null
+    fp: "A lure on a compromised legitimate site means the domain alone is not proof; a visit to the site from a host with no stage-2 hit is a candidate, not a victim. Pair every network hit with the stage-2 process hunt before isolating."
+    query: |-
+      DeviceNetworkEvents
+      | where Timestamp > ago(30d) and RemoteUrl has_any ("<lure domain>", "<payload domain>")
+      | summarize FirstSeen = min(Timestamp), Hosts = dcount(DeviceName), Users = make_set(InitiatingProcessAccountName) by RemoteUrl
+      DeviceFileEvents
+      | where Timestamp > ago(30d) and (FileOriginUrl has_any ("<lure domain>", "<payload domain>") or FileOriginReferrerUrl has "<lure domain>")
+      | summarize Hosts = make_set(DeviceName), Files = make_set(FileName) by FileOriginUrl
+      UrlClickEvents
+      | where Timestamp > ago(30d) and Url has "<lure domain>"
+      | summarize Clicks = count(), Users = make_set(AccountUpn) by Url, ActionType
+    tested: null
+    attack:
+      - "T1189"
+      - "T1204.004"
+  - id: "clickfix-response/crowdstrike/s1-which-page-served-the-lure"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "CrowdStrike Falcon"
+    title: "Which page served the lure"
+    why: "The lure URL is the durable indicator and its provenance (search result, ad, compromised site, mail link) decides who else you report it to. The sensor sees the browser's DNS lookups, not URLs; the full URL comes from the browser history (RTR, below) or the proxy."
+    how: null
+    fp: "Five minutes of browser DNS is ads, CDNs and telemetry; read it bottom-up from the paste time and stop at the first domain the user does not recognise. Cached names never appear; the browser history is the authoritative list."
+    query: |-
+      #event_simpleName=DnsRequest ComputerName="<host>"
+      | ContextBaseFileName=/^(chrome|msedge|firefox|brave)\.exe$/i
+      | @timestamp >= "<paste time minus 5m>" | @timestamp <= "<paste time>"
+      | table([@timestamp, DomainName, ContextBaseFileName])
+      | sort(@timestamp, order=asc)
+    tested: null
+    attack:
+      - "T1189"
+      - "T1566.002"
+  - id: "clickfix-response/crowdstrike/s2-the-pasted-command-from-the-run-dialog-the-explo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "CrowdStrike Falcon"
+    title: "The pasted command, from the Run dialog, the Explorer address bar or a terminal"
+    why: "This is the pasted command itself. Per-visitor obfuscation means the command and its URLs are your indicators, not a vendor hash. The strongest single signature is the trailing lure comment ( # I am not a robot, # reCAPTCHA Verification ID, # Ray ID, or a fake # C:\\...\\file.pdf in FileFix). A paste into an open PowerShell window runs in-process; the sensor's CommandHistory event records what was typed or pasted into a console."
+    how: null
+    fp: "Admin tooling, Intune remediation scripts and installers use -nop -w hidden -ep bypass from explorer.exe daily; the lure comment, a public URL and a non-technical user together are the hit. Exclude your management agents by parent image or signer, not by flag."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | ParentBaseFileName=/^(explorer|windowsterminal|powershell|pwsh|cmd|conhost)\.exe$/i
+      | ImageFileName=/\\(powershell|pwsh|cmd|mshta|curl|msiexec|certutil|bitsadmin|regsvr32|rundll32|wscript|cscript|conhost|finger|ssh)\.exe$/i
+      | CommandLine=/http|-enc|-e |-ec |iex|invoke-expression|downloadstring|downloadfile|irm |iwr |-w hidden|-w 1|-nop|-ep bypass|-executionpolicy bypass|urlcache|-decode|\/transfer|--headless|proxycommand|\/i:http|scrobj|javascript:|frombase64string|#\s*(I am not a robot|reCAPTCHA|Ray ID|Verification|Cloudflare|robot|[A-Z]:\\\\.+\.(pdf|docx|txt))/i
+      | table([@timestamp, ComputerName, UserName, ParentBaseFileName, ImageFileName, CommandLine])
+      // Typed or pasted into an open console (Win+X, Terminal)
+      #event_simpleName=CommandHistory
+      | CommandHistory=/http|iex|irm |iwr |downloadstring|mshta|curl|certutil|bitsadmin|#\s*(I am not a robot|reCAPTCHA|Ray ID)/i
+      | table([@timestamp, ComputerName, UserName, CommandHistory])
+      // HTA save-as: a browser or Explorer launching a .hta from Downloads
+      #event_simpleName=ProcessRollup2 ImageFileName=/\\mshta\.exe$/i
+      | ParentBaseFileName=/^(chrome|msedge|firefox|brave|explorer)\.exe$/i | CommandLine=/\\Downloads\\|\.hta/i
+      | table([@timestamp, ComputerName, UserName, ParentBaseFileName, CommandLine])
+      // RunMRU (Win+R) and TypedPaths (FileFix) are not ASEP keys, so there is no registry event: read them with RTR (Capture, below).
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1059.001"
+      - "T1218.005"
+  - id: "clickfix-response/crowdstrike/s2-download-folder-staging-a-browser-download-run-m"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "CrowdStrike Falcon"
+    title: "Download-folder staging: a browser download run minutes later from a pasted command"
+    why: "In this variant the pasted command is harmless on its own and the payload is the file the browser just saved; the pairing is the finding."
+    how: null
+    fp: "Users run installers from Downloads all day. A hit matters when the download is a script, an archive or an.hta, or the command came from Run or a terminal rather than a double-click."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | ParentBaseFileName=/^(explorer|windowsterminal|powershell|cmd)\.exe$/i
+      | CommandLine=/\\Downloads\\/i
+      | table([@timestamp, ComputerName, UserName, ParentBaseFileName, CommandLine])
+      // Pair with the browser's write: #event_simpleName=NewExecutableWritten or #event_simpleName=NewScriptWritten
+      //   ContextBaseFileName=/^(chrome|msedge|firefox|brave)\.exe$/i | TargetFileName=/\\Downloads\\/i
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1204.002"
+  - id: "clickfix-response/crowdstrike/s3-the-decoded-stager-script-content-and-lolbin-loa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Stage 2"
+    stage_ord: 3
+    platform: "CrowdStrike Falcon"
+    title: "The decoded stager (script content) and LOLBin loaders from user paths"
+    why: "The command line only shows the obfuscated outer layer. The sensor's script-control telemetry records the content AMSI handed it, which is the decoded text PowerShell actually ran, including the stage-2 URL. That is the Falcon equivalent of Windows event 4104."
+    how: null
+    fp: "Configuration-management agents and signed vendor scripts produce script-control events constantly; filter on the host and the paste window first. A block over a few KB of base64 or [char] arithmetic is the stager even if every cmdlet in it looks ordinary."
+    query: |-
+      #event_simpleName=ScriptControlScanTelemetry ComputerName="<host>"
+      | ScriptContent=/DownloadString|Invoke-WebRequest|iwr |irm |FromBase64String|-join|\[char\]|Add-MpPreference|Start-BitsTransfer|Expand-Archive/i
+      | table([@timestamp, ComputerName, UserName, CommandLine, ScriptingLanguageId, ScriptContent])
+      // Loaders from user-writable paths
+      #event_simpleName=ProcessRollup2
+      | ImageFileName=/\\(mshta|regsvr32|rundll32|curl|certutil|bitsadmin|msiexec)\.exe$/i
+      | CommandLine=/http|\\appdata\\|\\temp\\|\\downloads\\|\\programdata\\|-decode|\/transfer/i
+      | table([@timestamp, ComputerName, UserName, ParentBaseFileName, ImageFileName, CommandLine])
+    tested: null
+    attack:
+      - "T1059.001"
+      - "T1105"
+      - "T1218.005"
+      - "T1027"
+  - id: "clickfix-response/crowdstrike/s4-what-the-stager-left-behind-new-binaries-sideloa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Payload"
+    stage_ord: 4
+    platform: "CrowdStrike Falcon"
+    title: "What the stager left behind: new binaries, sideloaded DLLs and injection from user-writable paths"
+    why: "Stealer, loader or RAT decides the rest of the response. Stealers run once from AppData or Temp and exit; loaders and RATs stay resident, sideload a DLL next to a signed binary, or inject into a legitimate process. NetSupport is client32.exe with client32.ini beside it; Lumma injects into BitLockerToGo.exe or more.com."
+    how: null
+    fp: "Teams, OneDrive, Zoom and other per-user installers live in AppData\\Local and update themselves; a known vendor signer with a matching product name is normal. Unsigned, a random name, or a signed binary with an unsigned DLL beside it is the payload."
+    query: |-
+      #event_simpleName=ProcessRollup2 ComputerName="<host>"
+      | ImageFileName=/\\(AppData|Temp|Downloads|ProgramData|Users\\Public)\\/i
+      | groupBy([ImageFileName, SHA256HashData, ParentBaseFileName], function=[min(@timestamp), count(), collect([CommandLine])])
+      // Injection into a legitimate process, and NetSupport by name
+      #event_simpleName=InjectedThread ComputerName="<host>" | table([@timestamp, ContextBaseFileName, TargetProcessId, ThreadStartAddress])
+      #event_simpleName=ProcessRollup2 ImageFileName=/\\client32\.exe$/i | table([@timestamp, ComputerName, ImageFileName, CommandLine])
+      // Sideloaded DLLs: RTR  runscript -Raw=```Get-Process | % { $p=$_; $_.Modules | ? { $_.FileName -match 'AppData|Temp|ProgramData' } | select @{n='Proc';e={$p.Name}}, FileName }```
+    tested: null
+    attack:
+      - "T1574.001"
+      - "T1055"
+      - "T1219"
+  - id: "clickfix-response/crowdstrike/s5-browser-credential-stores-read-by-something-that"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Theft"
+    stage_ord: 5
+    platform: "CrowdStrike Falcon"
+    title: "Browser credential stores read by something that is not the browser; the remote-debugging bypass"
+    why: "Since Chrome 127 (App-Bound Encryption) a stealer cannot decrypt cookies by reading the files, so Lumma, StealC and SectopRAT start the browser themselves with --remote-debugging-port and ask it for the cookies. chrome.exe with that flag and a parent that is not explorer.exe or the browser is theft with few false positives."
+    how: null
+    fp: "Developers and test automation (Selenium, Playwright, Puppeteer) start Chrome with --remote-debugging-port from node.exe, python.exe or an IDE; exclude those parents on developer hosts. A stealer that reads the files in place leaves no file event; absence here is not absence of theft."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | ImageFileName=/\\(chrome|msedge|brave)\.exe$/i
+      | CommandLine=/--remote-debugging-port|--remote-debugging-pipe|--remote-allow-origins|--headless|--user-data-dir|--restore-last-session/i
+      | ParentBaseFileName!=/^(explorer|chrome|msedge|brave|svchost|userinit)\.exe$/i
+      | table([@timestamp, ComputerName, UserName, ParentBaseFileName, CommandLine])
+      // Profile files copied out of the profile (reads are not logged)
+      #event_simpleName=/^(NewExecutableWritten|NewScriptWritten|RansomwareOpenFile|FileOpenInfo)$/
+      | TargetFileName=/\\(Login Data|Cookies|Web Data|Local State|key4\.db|logins\.json|cookies\.sqlite|places\.sqlite)$/i
+      | TargetFileName!=/\\User Data\\|\\Firefox\\Profiles\\/i
+      | table([@timestamp, ComputerName, ContextBaseFileName, TargetFileName])
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1539"
+      - "T1552.001"
+  - id: "clickfix-response/crowdstrike/s6-outbound-connections-from-user-path-binaries-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Exfiltration"
+    stage_ord: 6
+    platform: "CrowdStrike Falcon"
+    title: "Outbound connections from user-path binaries and script hosts after the paste"
+    why: "A stealer uploads within minutes of running, usually to plain HTTPS, a Telegram bot or a Discord webhook; a loader's second connection is the next stage. The first connection after the paste from a process in AppData, Temp or a script host is the upload. The sensor records the connection, not the byte count; size comes from the proxy or firewall."
+    how: null
+    fp: "Teams, OneDrive, Slack and browser updaters in AppData\\Local talk to Microsoft, Slack and Google CDNs; exclude by destination ASN. Anything to a bare IP, a fresh domain, Telegram or a paste site from a process you cannot name is the upload."
+    query: |-
+      #event_simpleName=NetworkConnectIP4 ComputerName="<host>"
+      | @timestamp >= "<paste time>" | @timestamp <= "<paste time plus 2h>"
+      | ContextBaseFileName=/^(powershell|pwsh|mshta|curl|rundll32|regsvr32|msbuild|regasm|installutil|bitlockertogo)\.exe$|^more\.com$/i OR ContextImageFileName=/\\(AppData|Temp|Downloads|ProgramData|Users\\Public)\\/i
+      | !cidr(RemoteAddressIP4, subnet=["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"])
+      | groupBy([ContextBaseFileName, RemoteAddressIP4, RemotePort], function=[min(@timestamp), count()])
+      | sort(_min, order=asc)
+      // Pair with #event_simpleName=DnsRequest ContextBaseFileName=<same> for the hostname.
+    tested: null
+    attack:
+      - "T1041"
+      - "T1567"
+      - "T1071.001"
+  - id: "clickfix-response/crowdstrike/s7-the-host-s-users-signing-in-from-new-ips-or-netw"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Session reuse"
+    stage_ord: 7
+    platform: "CrowdStrike Falcon"
+    title: "The host's users signing in from new IPs or networks"
+    why: "Stolen cookies and passwords are used from the attacker's infrastructure, often days later after resale, and a replayed cookie is a sign-in without an MFA prompt. The sensor does not see this; Falcon only has it if the Entra ID, Okta or Google Workspace connector feeds Next-Gen SIEM. Entra keeps 30 d on P1/P2 and 7 d free, so export the sign-ins now (Capture, below)."
+    how: null
+    fp: "Mobile networks and VPN egress rotate IPs; a new IP in the same ASN and country is usually the user. A new ASN, a hosting provider or an impossible-travel pair is the replay."
+    query: |-
+      #repo="3pi_microsoft_entra_id" "<upn>"
+      // Entra sign-ins via the Microsoft Entra ID connector, searched as free text on the UPN.
+      // Read the IP and ASN from the parsed events and confirm the field names on one event before grouping.
+      // Okta: #repo=<okta repo> eventType="user.session.start" "<upn>".  Google Workspace: #repo=<gws repo> "login_success" "<upn>".
+      // No connector: run the question in Entra (Sentinel tab) or the IdP's own console. Slack, GitHub and AWS console have their own audit logs.
+    tested: null
+    attack:
+      - "T1550.004"
+      - "T1078.004"
+  - id: "clickfix-response/crowdstrike/s8-everything-that-survives-a-reboot-created-after"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Persistence"
+    stage_ord: 8
+    platform: "CrowdStrike Falcon"
+    title: "Everything that survives a reboot, created after the paste"
+    why: "Persistence means a loader or RAT, not only a stealer: this is a foothold, and the ransomware pre-encryption response applies. Look wider than Run keys: the startup folder, a task imported from XML, a WMI subscription, a new service, a DLL dropped beside a signed binary in AppData, and NetSupport's client32.ini."
+    how: null
+    fp: "Installers and updaters register tasks, services and Run values legitimately; keep only what was created after the paste time on that host, and anything whose target path is in AppData, Temp or ProgramData."
+    query: |-
+      #event_simpleName=AsepValueUpdate ComputerName="<host>"
+      | table([@timestamp, RegObjectName, RegValueName, RegStringValue, ContextBaseFileName])
+      #event_simpleName=ScheduledTaskRegistered ComputerName="<host>"
+      | table([@timestamp, TaskName, TaskExecCommand, TaskExecArguments, UserName])
+      #event_simpleName=CreateService ComputerName="<host>"
+      | table([@timestamp, ServiceDisplayName, ImageFileName, CommandLine])
+      #event_simpleName=ProcessRollup2 ComputerName="<host>"
+      | ImageFileName=/\\(schtasks|sc|wmic)\.exe$/i | CommandLine=/\/create|\/xml|create|eventfilter|commandlineeventconsumer/i
+      | table([@timestamp, ParentBaseFileName, CommandLine])
+      #event_simpleName=/^(NewExecutableWritten|NewScriptWritten)$/ ComputerName="<host>"
+      | TargetFileName=/\\Start Menu\\Programs\\Startup\\|\\client32\.(exe|ini)$|\\AppData\\.+\.dll$/i
+      | table([@timestamp, ContextBaseFileName, TargetFileName])
+      // WMI subscriptions and the full read-only diff: RTR  runscript -CloudFile="Get-PersistenceSnapshot" -CommandLine="-Zip"
+    tested: null
+    attack:
+      - "T1547.001"
+      - "T1053.005"
+      - "T1546.003"
+      - "T1543.003"
+      - "T1574.001"
+      - "T1219"
+  - id: "clickfix-response/crowdstrike/s9-other-hosts-that-resolved-the-lure-or-payload-do"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Spread"
+    stage_ord: 9
+    platform: "CrowdStrike Falcon"
+    title: "Other hosts that resolved the lure or payload domains, or ran the same command shape"
+    why: "ClickFix pages sit on compromised sites and ads; everyone who visited the same page is a candidate victim, and anyone who pasted gets the same command shape with a different obfuscation. Run the stage-2 hunt fleet-wide too."
+    how: null
+    fp: "A lure on a compromised legitimate site means the domain alone is not proof; pair every DNS hit with the stage-2 process or CommandHistory hunt before containing."
+    query: |-
+      #event_simpleName=DnsRequest
+      | DomainName=/(<lure domain>|<payload domain>)$/i
+      | groupBy([DomainName, ComputerName, UserName], function=[min(@timestamp)])
+      #event_simpleName=CommandHistory
+      | CommandHistory=/<distinctive fragment of the pasted command>/i
+      | groupBy([ComputerName, UserName])
+    tested: null
+    attack:
+      - "T1189"
+      - "T1204.004"
+  - id: "clickfix-response/sentinelone/s1-which-page-served-the-lure"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "SentinelOne"
+    title: "Which page served the lure"
+    why: "The lure URL is the durable indicator and its provenance (search result, ad, compromised site, mail link) decides who else you report it to. Deep Visibility records the browser's DNS lookups and, with URL events enabled, the URLs; the download's origin comes from the browser history (Capture, below)."
+    how: null
+    fp: "Five minutes of browser traffic is ads, CDNs and telemetry; stop at the first domain the user does not recognise. URL events need the Deep Visibility URL setting on; without it only DNS is there."
+    query: |-
+      endpoint.name = '<host>' AND src.process.name in:anycase ('chrome.exe','msedge.exe','firefox.exe','brave.exe')
+        AND event.type in ('DNS Resolved','GET','POST','CONNECT')
+      | columns event.time, event.type, src.process.name, event.dns.request, url.address
+      | sort event.time
+      // Read bottom-up from the paste time to the first domain the user does not recognise.
+    tested: null
+    attack:
+      - "T1189"
+      - "T1566.002"
+  - id: "clickfix-response/sentinelone/s2-the-pasted-command-from-the-run-dialog-the-explo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "SentinelOne"
+    title: "The pasted command, from the Run dialog, the Explorer address bar or a terminal"
+    why: "This is the pasted command itself. Per-visitor obfuscation means the command and its URLs are your indicators, not a vendor hash. The strongest single signature is the trailing lure comment ( # I am not a robot, # reCAPTCHA Verification ID, # Ray ID, or a fake # C:\\...\\file.pdf in FileFix). Remember the namespace, src.* is the parent and tgt.* the child."
+    how: null
+    fp: "Admin tooling, Intune remediation scripts and installers use -nop -w hidden -ep bypass from explorer.exe daily; the lure comment, a public URL and a non-technical user together are the hit. Exclude your management agents by src.process.name or publisher, not by flag."
+    query: |-
+      event.type = 'Process Creation'
+        AND src.process.name in:anycase ('explorer.exe','windowsterminal.exe','powershell.exe','pwsh.exe','cmd.exe','conhost.exe')
+        AND tgt.process.name in:anycase ('powershell.exe','pwsh.exe','cmd.exe','mshta.exe','curl.exe','msiexec.exe','certutil.exe','bitsadmin.exe','regsvr32.exe','rundll32.exe','wscript.exe','cscript.exe','conhost.exe','finger.exe','ssh.exe')
+        AND (tgt.process.cmdline contains:anycase ('http','-enc','-e ','-ec ','iex','invoke-expression','downloadstring','downloadfile','irm ','iwr ','-w hidden','-w 1','-nop','-ep bypass','-executionpolicy bypass','urlcache','-decode','/transfer','--headless','proxycommand','/i:http','scrobj','javascript:','frombase64string')
+             OR tgt.process.cmdline matches "(?i)#\\s*(I am not a robot|reCAPTCHA|Ray ID|Verification|Cloudflare|robot|[A-Z]:\\\\.+\\.(pdf|docx|txt))")
+      | columns event.time, endpoint.name, src.process.user, src.process.name, tgt.process.name, tgt.process.cmdline, src.process.storyline.id
+      // HTA save-as
+      event.type = 'Process Creation' AND tgt.process.name in:anycase ('mshta.exe')
+        AND src.process.name in:anycase ('chrome.exe','msedge.exe','firefox.exe','brave.exe','explorer.exe')
+      | columns event.time, endpoint.name, src.process.name, tgt.process.cmdline
+      // Win+R writes RunMRU, FileFix writes TypedPaths (registry events, if the agent records these keys; confirm on one host)
+      event.type = 'Registry Value Modified' AND registry.keyPath contains:anycase ('\\Explorer\\RunMRU', '\\Explorer\\TypedPaths')
+      | columns event.time, endpoint.name, registry.keyPath, registry.valueName, registry.value
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1059.001"
+      - "T1218.005"
+  - id: "clickfix-response/sentinelone/s2-download-folder-staging-a-browser-download-run-m"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "SentinelOne"
+    title: "Download-folder staging: a browser download run minutes later from a pasted command"
+    why: "In this variant the pasted command is harmless on its own and the payload is the file the browser just saved; the pairing is the finding."
+    how: null
+    fp: "Users run installers from Downloads all day. A hit matters when the download is a script, an archive or an.hta, or the command came from Run or a terminal rather than a double-click."
+    query: |-
+      event.type = 'Process Creation'
+        AND src.process.name in:anycase ('explorer.exe','windowsterminal.exe','powershell.exe','cmd.exe')
+        AND tgt.process.cmdline contains:anycase '\\downloads\\'
+      | columns event.time, endpoint.name, src.process.name, tgt.process.cmdline
+      // Pair with the browser's write:
+      event.type = 'File Creation' AND src.process.name in:anycase ('chrome.exe','msedge.exe','firefox.exe','brave.exe') AND tgt.file.path contains:anycase '\\downloads\\'
+      | columns event.time, endpoint.name, tgt.file.path
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1204.002"
+  - id: "clickfix-response/sentinelone/s3-lolbin-loaders-from-user-paths-the-decoded-stage"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Stage 2"
+    stage_ord: 3
+    platform: "SentinelOne"
+    title: "LOLBin loaders from user paths; the decoded stager lives in 4104 or memory"
+    why: "Deep Visibility records process, file and network events, not PowerShell script-block text, so the decoded stager is read from Windows event 4104 in your SIEM (Splunk or Elastic tab), from the Storyline's child processes and file writes, or from memory (Capture, below). What the agent does see well is the loader the stager starts."
+    how: null
+    fp: "Configuration-management agents run these binaries from ProgramData legitimately; exclude by src.process.name. Files written to Temp or AppData\\Local within a minute of the paste are the stage-2 payload regardless of name."
+    query: |-
+      event.type = 'Process Creation'
+        AND tgt.process.name in:anycase ('mshta.exe','regsvr32.exe','rundll32.exe','curl.exe','certutil.exe','bitsadmin.exe','msiexec.exe')
+        AND tgt.process.cmdline contains:anycase ('http','\\appdata\\','\\temp\\','\\downloads\\','\\programdata\\','-decode','/transfer')
+      | columns event.time, endpoint.name, src.process.name, tgt.process.cmdline, src.process.storyline.id
+      // Everything the paste did, in one shot:
+      src.process.storyline.id = '<storyline id from the stage-2 hit>'
+      | columns event.time, event.type, src.process.name, tgt.process.name, tgt.process.cmdline, tgt.file.path, event.dns.request
+      | sort event.time
+    tested: null
+    attack:
+      - "T1059.001"
+      - "T1105"
+      - "T1218.005"
+      - "T1027"
+  - id: "clickfix-response/sentinelone/s4-what-the-stager-left-behind-new-binaries-and-inj"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Payload"
+    stage_ord: 4
+    platform: "SentinelOne"
+    title: "What the stager left behind: new binaries and injection from user-writable paths"
+    why: "Stealer, loader or RAT decides the rest of the response. Stealers run once from AppData or Temp and exit; loaders and RATs stay resident, sideload a DLL next to a signed binary, or inject into a legitimate process. NetSupport is client32.exe with client32.ini beside it."
+    how: null
+    fp: "Teams, OneDrive, Zoom and other per-user installers live in AppData\\Local and update themselves; a known tgt.process.publisher with a matching displayName is normal. Empty publisher and a random name is the payload."
+    query: |-
+      endpoint.name = '<host>' AND event.type = 'Process Creation'
+        AND tgt.process.image.path contains:anycase ('\\appdata\\','\\temp\\','\\downloads\\','\\programdata\\','\\users\\public\\')
+      | group first = min(event.time), runs = count(), cmdlines = array_agg_distinct(tgt.process.cmdline) by tgt.process.image.path, tgt.process.publisher, tgt.process.displayName
+      | sort first
+      // NetSupport and sideloads
+      endpoint.name = '<host>' AND (tgt.process.name in:anycase ('client32.exe') OR tgt.file.path contains:anycase ('\\client32.ini'))
+      | columns event.time, event.type, tgt.process.name, tgt.file.path
+      // The threat page (Threats > Storyline) names the family the engine classified; an unsigned binary with no displayName from Temp is the payload otherwise.
+    tested: null
+    attack:
+      - "T1574.001"
+      - "T1055"
+      - "T1219"
+  - id: "clickfix-response/sentinelone/s5-browser-credential-stores-read-by-something-that"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Theft"
+    stage_ord: 5
+    platform: "SentinelOne"
+    title: "Browser credential stores read by something that is not the browser; the remote-debugging bypass"
+    why: "Since Chrome 127 (App-Bound Encryption) a stealer cannot decrypt cookies by reading the files, so Lumma, StealC and SectopRAT start the browser themselves with --remote-debugging-port and ask it for the cookies. chrome.exe with that flag and a parent that is not explorer.exe or the browser is theft with few false positives."
+    how: null
+    fp: "Developers and test automation (Selenium, Playwright, Puppeteer) start Chrome with --remote-debugging-port from node.exe, python.exe or an IDE; exclude those parents on developer hosts. A stealer that reads the files in place leaves no file event; absence here is not absence of theft."
+    query: |-
+      event.type = 'Process Creation'
+        AND tgt.process.name in:anycase ('chrome.exe','msedge.exe','brave.exe')
+        AND tgt.process.cmdline contains:anycase ('--remote-debugging-port','--remote-debugging-pipe','--remote-allow-origins','--headless','--user-data-dir','--restore-last-session')
+        AND !(src.process.name in:anycase ('explorer.exe','chrome.exe','msedge.exe','brave.exe','svchost.exe','userinit.exe'))
+      | columns event.time, endpoint.name, src.process.user, src.process.name, src.process.image.path, tgt.process.cmdline
+      // Profile files copied out of the profile (reads are not logged)
+      event.type = 'File Creation'
+        AND tgt.file.path matches "(?i)\\\\(Login Data|Cookies|Web Data|Local State|key4\\.db|logins\\.json|cookies\\.sqlite|places\\.sqlite)$"
+        AND !(tgt.file.path contains:anycase ('\\user data\\','\\firefox\\profiles\\'))
+      | columns event.time, endpoint.name, src.process.name, src.process.image.path, tgt.file.path
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1539"
+      - "T1552.001"
+  - id: "clickfix-response/sentinelone/s6-outbound-connections-from-user-path-binaries-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Exfiltration"
+    stage_ord: 6
+    platform: "SentinelOne"
+    title: "Outbound connections from user-path binaries and script hosts after the paste"
+    why: "A stealer uploads within minutes of running, usually to plain HTTPS, a Telegram bot or a Discord webhook; a loader's second connection is the next stage. The first outbound connection after the paste from a process in AppData, Temp or a script host is the upload. Byte counts come from the proxy or firewall."
+    how: null
+    fp: "Teams, OneDrive, Slack and browser updaters in AppData\\Local talk to Microsoft, Slack and Google CDNs; exclude by publisher or by destination. Anything to a bare IP, a fresh domain, Telegram or a paste site from a process you cannot name is the upload."
+    query: |-
+      endpoint.name = '<host>' AND event.type = 'IP Connect' AND event.network.direction = 'OUTGOING'
+        AND (src.process.image.path contains:anycase ('\\appdata\\','\\temp\\','\\downloads\\','\\programdata\\','\\users\\public\\')
+             OR src.process.name in:anycase ('powershell.exe','pwsh.exe','mshta.exe','curl.exe','rundll32.exe','regsvr32.exe','msbuild.exe','regasm.exe','installutil.exe','bitlockertogo.exe','more.com'))
+      | group first = min(event.time), connections = count() by src.process.name, src.process.image.path, dst.ip.address, dst.port.number
+      | sort first
+      // Pair with event.type = 'DNS Resolved' on the same src.process.storyline.id for the hostname.
+    tested: null
+    attack:
+      - "T1041"
+      - "T1567"
+      - "T1071.001"
+  - id: "clickfix-response/sentinelone/s7-the-host-s-users-signing-in-from-new-ips-or-netw"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Session reuse"
+    stage_ord: 7
+    platform: "SentinelOne"
+    title: "The host's users signing in from new IPs or networks"
+    why: "Stolen cookies and passwords are used from the attacker's infrastructure, often days later after resale, and a replayed cookie is a sign-in without an MFA prompt. The agent does not see this; the Data Lake only has it if Entra, Okta or Google Workspace logs are ingested. Entra keeps 30 d on P1/P2 and 7 d free, so export the sign-ins now (Capture, below)."
+    how: null
+    fp: "Mobile networks and VPN egress rotate IPs; a new IP in the same ASN and country is usually the user. A new ASN, a hosting provider or an impossible-travel pair is the replay."
+    query: |-
+      // M365 / Entra field names differ per parser. Discover first:
+      dataSource.name = '<entra_signin_source>' AND * contains '<upn>'
+      | limit 1 | columns *
+      // then group by the IP and ASN fields you found:
+      dataSource.name = '<entra_signin_source>' AND * contains '<upn>'
+      | group first = min(event.time), events = count() by <ip_field>, <asn_field>
+      | sort first
+      // Okta and Google Workspace sources: same shape, eventType user.session.start / login_success. No ingestion: ask the IdP's own console.
+    tested: null
+    attack:
+      - "T1550.004"
+      - "T1078.004"
+  - id: "clickfix-response/sentinelone/s8-everything-that-survives-a-reboot-created-after"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Persistence"
+    stage_ord: 8
+    platform: "SentinelOne"
+    title: "Everything that survives a reboot, created after the paste"
+    why: "Persistence means a loader or RAT, not only a stealer: this is a foothold, and the ransomware pre-encryption response applies. Look wider than Run keys: the startup folder, a task imported from XML, a WMI subscription, a new service, a DLL dropped beside a signed binary in AppData, and NetSupport's client32.ini."
+    how: null
+    fp: "Installers and updaters register tasks, services and Run values legitimately; keep only what was created after the paste time on that host, and anything whose target path is in AppData, Temp or ProgramData."
+    query: |-
+      endpoint.name = '<host>' AND event.type = 'Registry Value Modified'
+        AND registry.keyPath contains:anycase ('\\CurrentVersion\\Run', '\\CurrentVersion\\RunOnce', '\\Winlogon', '\\Image File Execution Options')
+      | columns event.time, registry.keyPath, registry.valueName, registry.value, src.process.name
+      endpoint.name = '<host>' AND event.type = 'File Creation'
+        AND (tgt.file.path contains:anycase '\\start menu\\programs\\startup\\' OR tgt.file.path matches "(?i)\\\\client32\\.(exe|ini)$" OR tgt.file.path matches "(?i)\\\\AppData\\\\.+\\.dll$")
+      | columns event.time, src.process.name, tgt.file.path
+      endpoint.name = '<host>' AND task.name = *
+      | columns event.time, event.type, task.name, src.process.name, src.process.cmdline
+      endpoint.name = '<host>' AND event.type = 'Process Creation'
+        AND ((tgt.process.name in:anycase ('schtasks.exe') AND tgt.process.cmdline contains:anycase ('/create','/xml')) OR (tgt.process.name in:anycase ('sc.exe') AND tgt.process.cmdline contains:anycase 'create') OR (tgt.process.name in:anycase ('wmic.exe','powershell.exe') AND tgt.process.cmdline contains:anycase ('eventfilter','commandlineeventconsumer','__EventFilter')))
+      | columns event.time, src.process.name, tgt.process.cmdline
+      // Services, WMI subscriptions and the full read-only diff: RemoteOps, run Get-PersistenceSnapshot.ps1 -Zip (Capture, below).
+    tested: null
+    attack:
+      - "T1547.001"
+      - "T1053.005"
+      - "T1546.003"
+      - "T1543.003"
+      - "T1574.001"
+      - "T1219"
+  - id: "clickfix-response/sentinelone/s9-other-hosts-that-resolved-the-lure-or-payload-do"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Spread"
+    stage_ord: 9
+    platform: "SentinelOne"
+    title: "Other hosts that resolved the lure or payload domains, or ran the same command shape"
+    why: "ClickFix pages sit on compromised sites and ads; everyone who visited the same page is a candidate victim, and anyone who pasted gets the same command shape with a different obfuscation. Run the stage-2 hunt without the host filter too."
+    how: null
+    fp: "A lure on a compromised legitimate site means the domain alone is not proof; pair every DNS hit with the stage-2 process hunt before disconnecting."
+    query: |-
+      event.dns.request contains:anycase ('<lure domain>', '<payload domain>')
+      | group first = min(event.time), hosts = estimate_distinct(endpoint.name), host_list = array_agg_distinct(endpoint.name) by event.dns.request
+      event.type = 'Process Creation' AND tgt.process.cmdline contains:anycase '<distinctive fragment of the pasted command>'
+      | group hosts = array_agg_distinct(endpoint.name), users = array_agg_distinct(src.process.user) by tgt.process.cmdline
+    tested: null
+    attack:
+      - "T1189"
+      - "T1204.004"
+  - id: "clickfix-response/velociraptor/s1-which-page-served-the-lure-from-the-browser-hist"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Velociraptor"
+    title: "Which page served the lure, from the browser history"
+    why: "The browser history is the authoritative list of what the user saw, including the search result or ad that led there; Chrome's downloads table keeps the referrer and tab URL of anything saved, which is the lure's provenance for the download-folder and HTA variants."
+    how: null
+    fp: "Ten minutes of history is search, ads and redirects; read it from the paste time backwards and stop at the first page the user does not recognise."
+    query: |-
+      Hunt: Windows.Applications.Chrome.History   (default globs cover Chrome, Edge, Brave)
+        URLRegex = .                              (everything; filter in the notebook to the 10 minutes before the paste)
+      Hunt: Windows.KapeFiles.Targets             (Firefox places.sqlite and the Chromium "History" file with its downloads table)
+        Chrome = Y, Edge = Y, Firefox = Y
+      Notebook:  SELECT * FROM source(artifact="Windows.Applications.Chrome.History") WHERE visited_time > '<paste time minus 10m>' ORDER BY visited_time
+    tested: null
+    attack:
+      - "T1189"
+      - "T1566.002"
+  - id: "clickfix-response/velociraptor/s2-the-pasted-command-from-runmru-typedpaths-the-po"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "Velociraptor"
+    title: "The pasted command, from RunMRU, TypedPaths, the PowerShell history and the clipboard cache"
+    why: "Win+R leaves the command in RunMRU (only when the launch succeeded), FileFix leaves it in TypedPaths, a terminal paste in the PSReadLine history file, and every variant in Windows Timeline's ActivitiesCache.db clipboard records, which survive the stager wiping RunMRU."
+    how: null
+    fp: "PSReadLine history is every command the user ever typed; SearchStrings keeps it to the shapes above. An empty RunMRU on a host where the user says they used Win+R means either the launch failed (no entry is written) or the stager wiped it; the Timeline clipboard entry settles which."
+    query: |-
+      Hunt: Windows.Timeline.Registry.RunMRU        (Win+R)
+        dateAfter  = <start of the window>
+      Hunt: Windows.Registry.NTUser                 (FileFix: Explorer address bar)
+        KeyGlob = Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths\*
+      Hunt: Windows.System.Powershell.PSReadline    (Win+X / Terminal)
+        SearchStrings = http|iex|irm|iwr|downloadstring|mshta|curl|certutil|bitsadmin|I am not a robot|reCAPTCHA|Ray ID
+        UploadFiles   = true
+      Hunt: Windows.Forensics.Timeline              (ActivitiesCache.db: clipboard history; filter the notebook on the paste window)
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1059.001"
+      - "T1115"
+  - id: "clickfix-response/velociraptor/s2-download-folder-staging-a-browser-download-run-m"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "Velociraptor"
+    title: "Download-folder staging: a browser download run minutes later from a pasted command"
+    why: "In this variant the pasted command is harmless on its own and the payload is the file the browser just saved; the pairing is the finding, and the file's Zone.Identifier stream holds the download URL."
+    how: null
+    fp: "Users run installers from Downloads all day. A hit matters when the download is a script, an archive or an.hta, or it was run from Run or a terminal rather than by double-click."
+    query: |-
+      Hunt: Windows.Forensics.Usn
+        PathRegex = (?i)\\Downloads\\
+        DateAfter = <start of the window>
+      Hunt: Windows.Search.FileFinder
+        SearchFilesGlob = C:\Users\*\Downloads\*
+        Upload_File = Y
+      Then compare file times with Windows.Timeline.Registry.RunMRU / Windows.System.Powershell.PSReadline, and read the Zone.Identifier of the matched file.
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1204.002"
+  - id: "clickfix-response/velociraptor/s3-the-decoded-stager-from-script-block-logging-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Stage 2"
+    stage_ord: 3
+    platform: "Velociraptor"
+    title: "The decoded stager from script-block logging, and loaders from user paths"
+    why: "The command line only shows the obfuscated outer layer. Script-block logging (event 4104) records the decoded text PowerShell actually ran, including the stage-2 URL; Windows writes 4104 at Warning level for suspicious blocks even when the policy is off. Event 400 in the classic Windows PowerShell log names the host application that ran it, which separates a Terminal paste from a script host."
+    how: null
+    fp: "Configuration-management agents and signed vendor scripts produce 4104 blocks constantly; filter on the host and the paste window first. A block over a few KB of base64 or [char] arithmetic is the stager even if every cmdlet in it looks ordinary."
+    query: |-
+      Hunt: Windows.EventLogs.PowershellScriptblock
+        SearchStrings = DownloadString|Invoke-WebRequest|iwr |irm |FromBase64String|-join|\[char\]|Add-MpPreference
+      Hunt: Windows.EventLogs.EvtxHunter
+        ChannelRegex = (?i)^Windows PowerShell$
+        IdRegex      = ^400$
+        IocRegex     = HostApplication=(?!.*(ServerRemoteHost|ConfigurationManager))
+      Hunt: Windows.Analysis.EvidenceOfExecution   (Prefetch, Amcache, BAM: mshta, curl, certutil, msiexec, regsvr32 and anything from AppData or Temp)
+    tested: null
+    attack:
+      - "T1059.001"
+      - "T1105"
+      - "T1218.005"
+      - "T1027"
+  - id: "clickfix-response/velociraptor/s4-what-the-stager-left-behind-new-binaries-sideloa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Payload"
+    stage_ord: 4
+    platform: "Velociraptor"
+    title: "What the stager left behind: new binaries, sideloaded DLLs and injected processes"
+    why: "Stealer, loader or RAT decides the rest of the response. Stealers run once from AppData or Temp and exit; loaders and RATs stay resident, sideload a DLL next to a signed binary, or inject into a legitimate process. NetSupport is client32.exe with client32.ini beside it."
+    how: null
+    fp: "Teams, OneDrive, Zoom and other per-user installers live in AppData\\Local and update themselves; a trusted Authenticode signer with a matching product name is normal. Unsigned, a random name, or a signed binary with an unsigned DLL beside it is the payload."
+    query: |-
+      Hunt: Windows.System.Pslist                 (live: running from AppData, Temp, ProgramData; Authenticode column)
+        ProcessRegex = .
+      Hunt: Windows.System.DLLs                   (sideloads: DLLs loaded from user-writable paths)
+        ProcessRegex = .
+      Hunt: Windows.Detection.Yara.Process        (NetSupport, Lumma, StealC, SectopRAT rules from your intel feed)
+      Hunt: Windows.Search.FileFinder
+        SearchFilesGlob = C:\Users\*\AppData\**\client32.ini
+      Hunt: Windows.Analysis.EvidenceOfExecution  (what ran since the paste, with Amcache SHA1 for VirusTotal)
+    tested: null
+    attack:
+      - "T1574.001"
+      - "T1055"
+      - "T1219"
+  - id: "clickfix-response/velociraptor/s5-browser-credential-stores-copied-and-the-remote"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Theft"
+    stage_ord: 5
+    platform: "Velociraptor"
+    title: "Browser credential stores copied, and the remote-debugging bypass"
+    why: "Copies of Login Data, Cookies or Local State outside the profile show in the USN journal. Since Chrome 127 (App-Bound Encryption) stealers instead start the browser with --remote-debugging-port and ask it for the cookies, which leaves a Prefetch and Amcache trace for the browser but no copy; the KapeFiles browser targets then tell you which accounts were signed in."
+    how: null
+    fp: "Chrome itself writes Cookies-journal and Login Data-journal in place; only a copy outside User Data counts. A stealer that reads the files in place leaves no USN record; absence here is not absence of theft."
+    query: |-
+      Hunt: Windows.Forensics.Usn
+        PathRegex = (?i)\\(Login Data|Cookies|Web Data|Local State|key4\.db|logins\.json|cookies\.sqlite)$
+        DateAfter = <paste time>
+      Hunt: Windows.EventLogs.EvtxHunter          (4688 with command-line auditing, if enabled)
+        ChannelRegex = Security
+        IdRegex      = ^4688$
+        IocRegex     = --remote-debugging-port|--remote-debugging-pipe|--remote-allow-origins
+      Hunt: Windows.KapeFiles.Targets              (which accounts and sessions the browser held)
+        Chrome = Y, Edge = Y, Firefox = Y
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1539"
+      - "T1552.001"
+  - id: "clickfix-response/velociraptor/s6-what-connected-out-after-the-paste-and-how-much"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Exfiltration"
+    stage_ord: 6
+    platform: "Velociraptor"
+    title: "What connected out after the paste, and how much it sent"
+    why: "Live connections name the C2; SRUM's network usage table records bytes sent per application per hour, which is the only on-host evidence of how large the upload was."
+    how: null
+    fp: "SRUM aggregates per hour and per application; Teams, OneDrive and browsers dominate. Look for a process name you cannot place with tens of MB sent in the paste hour."
+    query: |-
+      Hunt: Windows.Network.NetstatEnriched      (live: process, path, signer, remote address)
+      Hunt: Windows.Forensics.SRUM               (Network Usage: BytesSent per application since the paste)
+      Hunt: Windows.EventLogs.EvtxHunter         (Sysmon 3 or Windows Filtering Platform 5156, if logged)
+        ChannelRegex = Sysmon
+        IdRegex      = ^3$
+        IocRegex     = (?i)\\(AppData|Temp|Downloads|ProgramData)\\
+    tested: null
+    attack:
+      - "T1041"
+      - "T1567"
+      - "T1071.001"
+  - id: "clickfix-response/velociraptor/s8-everything-that-survives-a-reboot"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Persistence"
+    stage_ord: 8
+    platform: "Velociraptor"
+    title: "Everything that survives a reboot"
+    why: "Persistence means a loader or RAT, not only a stealer: this is a foothold, and the ransomware pre-encryption response applies. Collect the lot and diff it against a clean host of the same build."
+    how: null
+    fp: "Vendor agents register tasks, services and WMI consumers (SCCM, Intune, backup clients); the -CompareTo diff against a clean host of the same build removes them. Anything left whose target is in AppData, Temp or ProgramData is the foothold."
+    query: |-
+      Collect on the host:
+        Windows.Sys.StartupItems                 (Run, RunOnce, startup folders)
+        Windows.System.TaskScheduler             (tasks, including ones imported from XML)
+        Windows.System.Services
+        Windows.Persistence.PermanentWMIEvents   (filter, consumer, binding)
+        Windows.System.DLLs                      (sideloads from AppData)
+      Hunt: Windows.System.PowerShell
+        Command = C:\IR\Get-PersistenceSnapshot.ps1 -Zip -OutputPath C:\IR -CompareTo C:\IR\clean-baseline.json
+    tested: null
+    attack:
+      - "T1547.001"
+      - "T1053.005"
+      - "T1546.003"
+      - "T1543.003"
+      - "T1574.001"
+      - "T1219"
+  - id: "clickfix-response/velociraptor/s9-other-hosts-that-visited-the-lure-or-pasted-the"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Spread"
+    stage_ord: 9
+    platform: "Velociraptor"
+    title: "Other hosts that visited the lure or pasted the same command"
+    why: "ClickFix pages sit on compromised sites and ads; everyone who visited the same page is a candidate victim, and anyone who pasted gets the same command shape with a different obfuscation."
+    how: null
+    fp: "A lure on a compromised legitimate site means a history hit alone is not proof; pair it with a RunMRU, PSReadline or Timeline hit before quarantining."
+    query: |-
+      Hunt: Windows.Applications.Chrome.History   (default globs cover Chrome, Edge, Brave)
+        URLRegex = (?i)<lure domain>
+      Hunt: Windows.Timeline.Registry.RunMRU
+        dateAfter = <start of the window>
+      Hunt: Windows.System.Powershell.PSReadline
+        SearchStrings = <distinctive fragment of the pasted command>|I am not a robot|reCAPTCHA|Ray ID
+    tested: null
+    attack:
+      - "T1189"
+      - "T1204.004"
+  - id: "clickfix-response/splunk/s1-which-page-served-the-lure-and-where-the-downloa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Splunk"
+    title: "Which page served the lure, and where the download came from"
+    why: "The lure URL is the durable indicator and its provenance (search result, ad, compromised site, mail link) decides who else you report it to. Sysmon 22 has the browser's DNS; Sysmon 15 records the Zone.Identifier stream the browser writes on every download, including HostUrl and ReferrerUrl."
+    how: null
+    fp: "Five minutes of browser DNS is ads, CDNs and telemetry; read it bottom-up from the paste time and stop at the first domain the user does not recognise. Sysmon 15 only carries the stream contents when the config enables it for the stream."
+    query: |-
+      index=windows host="<host>" source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=22
+        (Image="*\\chrome.exe" OR Image="*\\msedge.exe" OR Image="*\\firefox.exe" OR Image="*\\brave.exe")
+        earliest="<paste time minus 5m>" latest="<paste time>"
+      | table _time QueryName Image | sort _time
+      // The download's origin (Sysmon 15, FileCreateStreamHash)
+      index=windows host="<host>" source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=15 TargetFilename="*:Zone.Identifier"
+      | rex field=Contents "HostUrl=(?<HostUrl>\S+)" | rex field=Contents "ReferrerUrl=(?<ReferrerUrl>\S+)"
+      | table _time TargetFilename HostUrl ReferrerUrl Image
+      // Mail links: Safe Links click records in the O365 input (Defender for Office 365), search the lure domain as free text in sourcetype=o365:management:activity.
+    tested: null
+    attack:
+      - "T1189"
+      - "T1566.002"
+  - id: "clickfix-response/splunk/s2-the-pasted-command-from-the-run-dialog-the-explo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "The pasted command, from the Run dialog, the Explorer address bar or a terminal"
+    why: "This is the pasted command itself. Per-visitor obfuscation means the command and its URLs are your indicators, not a vendor hash. The strongest single signature is the trailing lure comment ( # I am not a robot, # reCAPTCHA Verification ID, # Ray ID, or a fake # C:\\...\\file.pdf in FileFix). Event 400 in the classic Windows PowerShell log carries HostApplication, which is the full command line of the host that started PowerShell, and fires once per host start, so it is the stage-2 record for a Terminal paste rather than a noise source."
+    how: null
+    fp: "Admin tooling, Intune remediation scripts and installers use -nop -w hidden -ep bypass from explorer.exe daily; the lure comment, a public URL and a non-technical user together are the hit. Exclude your management agents by ParentImage, not by flag. If Sysmon is not deployed, Security 4688 with command-line auditing ( Process_Command_Line ) carries the same filter."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1
+        (ParentImage="*\\explorer.exe" OR ParentImage="*\\WindowsTerminal.exe" OR ParentImage="*\\powershell.exe" OR ParentImage="*\\pwsh.exe" OR ParentImage="*\\cmd.exe" OR ParentImage="*\\conhost.exe")
+        (Image="*\\powershell.exe" OR Image="*\\pwsh.exe" OR Image="*\\cmd.exe" OR Image="*\\mshta.exe" OR Image="*\\curl.exe" OR Image="*\\msiexec.exe" OR Image="*\\certutil.exe" OR Image="*\\bitsadmin.exe" OR Image="*\\regsvr32.exe" OR Image="*\\rundll32.exe" OR Image="*\\wscript.exe" OR Image="*\\cscript.exe" OR Image="*\\conhost.exe" OR Image="*\\finger.exe" OR Image="*\\ssh.exe")
+      | regex CommandLine="(?i)http|-enc|-e |-ec |iex|invoke-expression|downloadstring|downloadfile|irm |iwr |-w hidden|-w 1|-nop|-ep bypass|-executionpolicy bypass|urlcache|-decode|/transfer|--headless|proxycommand|/i:http|scrobj|javascript:|frombase64string|#\s*(I am not a robot|reCAPTCHA|Ray ID|Verification|Cloudflare|robot|[A-Z]:\\\\.+\.(pdf|docx|txt))"
+      | table _time host User ParentImage Image CommandLine
+      // Win+R writes RunMRU, FileFix writes TypedPaths (Sysmon 13, if the config includes the keys)
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=13 (TargetObject="*\\Explorer\\RunMRU\\*" OR TargetObject="*\\Explorer\\TypedPaths\\*")
+      | table _time host TargetObject Details
+      // Which host application ran PowerShell (Terminal paste vs script host)
+      index=windows source="XmlWinEventLog:Windows PowerShell" EventCode=400
+      | rex "HostApplication=(?<HostApplication>[^\r\n]+)" | rex "HostName=(?<HostName>[^\r\n]+)"
+      | search HostApplication="*http*" OR HostApplication="*-enc*" OR HostApplication="*iex*" OR HostApplication="*hidden*" OR HostApplication="*bypass*"
+      | table _time host HostName HostApplication
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1059.001"
+      - "T1218.005"
+  - id: "clickfix-response/splunk/s2-download-folder-staging-a-browser-download-run-m"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "Download-folder staging: a browser download run minutes later from a pasted command"
+    why: "In this variant the pasted command is harmless on its own and the payload is the file the browser just saved; the pairing is the finding."
+    how: null
+    fp: "Users run installers from Downloads all day. A hit matters when the download is a script, an archive or an.hta, or the command came from Run or a terminal rather than a double-click."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" (EventCode=11 OR EventCode=1)
+        ((EventCode=11 (Image="*\\chrome.exe" OR Image="*\\msedge.exe" OR Image="*\\firefox.exe" OR Image="*\\brave.exe") TargetFilename="*\\Downloads\\*")
+         OR (EventCode=1 (ParentImage="*\\explorer.exe" OR ParentImage="*\\WindowsTerminal.exe" OR ParentImage="*\\powershell.exe" OR ParentImage="*\\cmd.exe") CommandLine="*\\Downloads\\*"))
+      | transaction host maxspan=10m startswith="EventCode=11" endswith="EventCode=1"
+      | table _time host TargetFilename ParentImage CommandLine
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1204.002"
+  - id: "clickfix-response/splunk/s3-the-decoded-stager-4104-script-block-text-and-lo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Stage 2"
+    stage_ord: 3
+    platform: "Splunk"
+    title: "The decoded stager (4104 script-block text) and loaders from user paths"
+    why: "The command line only shows the obfuscated outer layer. Script-block logging (event 4104) records the decoded text PowerShell actually ran, including the stage-2 URL; Windows writes 4104 at Warning level for suspicious blocks even when the policy is off, so the query is worth running on tenants that never enabled it."
+    how: null
+    fp: "Configuration-management agents and signed vendor scripts produce 4104 blocks constantly; filter on the host and the paste window first. A block over a few KB of base64 or [char] arithmetic is the stager even if every cmdlet in it looks ordinary."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-PowerShell/Operational" EventCode=4104
+      | regex ScriptBlockText="(?i)DownloadString|Invoke-WebRequest|iwr |irm |FromBase64String|-join|\[char\]|Add-MpPreference|Start-BitsTransfer|Expand-Archive"
+      | stats min(_time) as first_seen count values(ScriptBlockText) as blocks by host
+      | convert ctime(first_seen)
+      // Loaders from user-writable paths
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1
+        (Image="*\\mshta.exe" OR Image="*\\regsvr32.exe" OR Image="*\\rundll32.exe" OR Image="*\\curl.exe" OR Image="*\\certutil.exe" OR Image="*\\bitsadmin.exe" OR Image="*\\msiexec.exe")
+        (CommandLine="*http*" OR CommandLine="*\\AppData\\*" OR CommandLine="*\\Temp\\*" OR CommandLine="*\\Downloads\\*" OR CommandLine="*\\ProgramData\\*" OR CommandLine="*-decode*" OR CommandLine="*/transfer*")
+      | table _time host User ParentImage Image CommandLine
+    tested: null
+    attack:
+      - "T1059.001"
+      - "T1105"
+      - "T1218.005"
+      - "T1027"
+  - id: "clickfix-response/splunk/s4-what-the-stager-left-behind-new-binaries-sideloa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Payload"
+    stage_ord: 4
+    platform: "Splunk"
+    title: "What the stager left behind: new binaries, sideloaded DLLs and injection from user-writable paths"
+    why: "Stealer, loader or RAT decides the rest of the response. Stealers run once from AppData or Temp and exit; loaders and RATs stay resident, sideload a DLL next to a signed binary (Sysmon 7 with Signed=false ), or inject into a legitimate process (Sysmon 8). NetSupport is client32.exe with client32.ini beside it."
+    how: null
+    fp: "Teams, OneDrive, Zoom and other per-user installers live in AppData\\Local and update themselves; a known Company with a matching Product is normal. Empty version info, a random name, or a signed binary loading an unsigned DLL beside it is the payload."
+    query: |-
+      index=windows host="<host>" source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 earliest="<paste time>"
+        (Image="*\\AppData\\*" OR Image="*\\Temp\\*" OR Image="*\\Downloads\\*" OR Image="*\\ProgramData\\*" OR Image="*\\Users\\Public\\*")
+      | stats min(_time) as first_seen count values(CommandLine) as cmd values(ParentImage) as parent by Image Hashes Company Product OriginalFileName
+      | convert ctime(first_seen) | sort first_seen
+      // Sideloaded DLLs and injection
+      index=windows host="<host>" source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=7 earliest="<paste time>"
+        (ImageLoaded="*\\AppData\\*" OR ImageLoaded="*\\Temp\\*" OR ImageLoaded="*\\ProgramData\\*") Signed=false
+      | stats count values(Image) as loaded_by by ImageLoaded Hashes
+      index=windows host="<host>" source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=8 earliest="<paste time>"
+      | table _time SourceImage TargetImage StartFunction
+    tested: null
+    attack:
+      - "T1574.001"
+      - "T1055"
+      - "T1219"
+  - id: "clickfix-response/splunk/s5-browser-credential-stores-read-by-something-that"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Theft"
+    stage_ord: 5
+    platform: "Splunk"
+    title: "Browser credential stores read by something that is not the browser; the remote-debugging bypass"
+    why: "Since Chrome 127 (App-Bound Encryption) a stealer cannot decrypt cookies by reading the files, so Lumma, StealC and SectopRAT start the browser themselves with --remote-debugging-port and ask it for the cookies. chrome.exe with that flag and a parent that is not explorer.exe or the browser is theft with few false positives."
+    how: null
+    fp: "Developers and test automation (Selenium, Playwright, Puppeteer) start Chrome with --remote-debugging-port from node.exe, python.exe or an IDE; exclude those parents on developer hosts. A stealer that reads the files in place leaves no file event; absence here is not absence of theft."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1
+        (Image="*\\chrome.exe" OR Image="*\\msedge.exe" OR Image="*\\brave.exe")
+        (CommandLine="*--remote-debugging-port*" OR CommandLine="*--remote-debugging-pipe*" OR CommandLine="*--remote-allow-origins*" OR CommandLine="*--headless*" OR CommandLine="*--user-data-dir*" OR CommandLine="*--restore-last-session*")
+        NOT (ParentImage="*\\explorer.exe" OR ParentImage="*\\chrome.exe" OR ParentImage="*\\msedge.exe" OR ParentImage="*\\brave.exe" OR ParentImage="*\\svchost.exe" OR ParentImage="*\\userinit.exe")
+      | table _time host User ParentImage CommandLine
+      // Profile files copied out of the profile (Sysmon 11; reads are not logged)
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=11
+        (TargetFilename="*\\Login Data" OR TargetFilename="*\\Cookies" OR TargetFilename="*\\Web Data" OR TargetFilename="*\\Local State" OR TargetFilename="*\\key4.db" OR TargetFilename="*\\logins.json" OR TargetFilename="*\\cookies.sqlite" OR TargetFilename="*\\places.sqlite")
+        NOT TargetFilename="*\\User Data\\*" NOT TargetFilename="*\\Firefox\\Profiles\\*"
+      | table _time host Image TargetFilename
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1539"
+      - "T1552.001"
+  - id: "clickfix-response/splunk/s6-outbound-connections-from-user-path-binaries-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Exfiltration"
+    stage_ord: 6
+    platform: "Splunk"
+    title: "Outbound connections from user-path binaries and script hosts after the paste"
+    why: "A stealer uploads within minutes of running, usually to plain HTTPS, a Telegram bot or a Discord webhook; a loader's second connection is the next stage. Sysmon 3 names the process and destination; the byte count comes from the proxy or firewall index, joined on the host's IP and the minute."
+    how: null
+    fp: "Teams, OneDrive, Slack and browser updaters in AppData\\Local talk to Microsoft, Slack and Google CDNs; exclude by DestinationHostname. Anything to a bare IP, a fresh domain, Telegram or a paste site from a process you cannot name is the upload."
+    query: |-
+      index=windows host="<host>" source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=3 Initiated=true
+        earliest="<paste time>" latest="<paste time plus 2h>"
+        NOT (DestinationIp=10.0.0.0/8 OR DestinationIp=172.16.0.0/12 OR DestinationIp=192.168.0.0/16)
+        (Image="*\\AppData\\*" OR Image="*\\Temp\\*" OR Image="*\\Downloads\\*" OR Image="*\\ProgramData\\*" OR Image="*\\Users\\Public\\*"
+         OR Image="*\\powershell.exe" OR Image="*\\pwsh.exe" OR Image="*\\mshta.exe" OR Image="*\\curl.exe" OR Image="*\\rundll32.exe" OR Image="*\\regsvr32.exe" OR Image="*\\msbuild.exe" OR Image="*\\regasm.exe" OR Image="*\\installutil.exe" OR Image="*\\BitLockerToGo.exe" OR Image="*\\more.com")
+      | stats min(_time) as first_seen count values(DestinationPort) as ports by Image DestinationIp DestinationHostname
+      | convert ctime(first_seen) | sort first_seen
+      // Bytes: join the proxy index on src_ip and _time; look for a single POST of tens of MB.
+    tested: null
+    attack:
+      - "T1041"
+      - "T1567"
+      - "T1071.001"
+  - id: "clickfix-response/splunk/s7-the-host-s-users-signing-in-from-new-ips-or-netw"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Session reuse"
+    stage_ord: 7
+    platform: "Splunk"
+    title: "The host's users signing in from new IPs or networks"
+    why: "Stolen cookies and passwords are used from the attacker's infrastructure, often days later after resale, and a replayed cookie is a non-interactive sign-in with no MFA prompt. Entra keeps 30 d on P1/P2 and 7 d free; your index keeps what the add-on pulled. Okta and Google Workspace have their own add-ons; same question, their field names."
+    how: null
+    fp: "Mobile networks and VPN egress rotate IPs; a new IP in the same ASN and country is usually the user. A new ASN, a hosting provider, or a non-interactive sign-in from an IP the interactive logs never show is the replay."
+    query: |-
+      sourcetype=azure:monitor:aad (category=SignInLogs OR category=NonInteractiveUserSignInLogs) user IN ("<upn1>", "<upn2>") properties.status.errorCode=0
+      | stats min(_time) as first_seen count values(category) as kinds values(properties.appDisplayName) as apps by user src properties.autonomousSystemNumber
+      | convert ctime(first_seen) | sort first_seen
+      // Okta (Splunk Add-on for Okta Identity Cloud):  sourcetype="OktaIM2:log" eventType="user.session.start" actor.alternateId="<upn>" | stats min(_time) count by client.ipAddress client.geographicalContext.country
+      // Google Workspace (Splunk Add-on for Google Workspace):  sourcetype="gws:reports:login" "<upn>" | stats min(_time) count by ipAddress
+    tested: null
+    attack:
+      - "T1550.004"
+      - "T1078.004"
+  - id: "clickfix-response/splunk/s8-everything-that-survives-a-reboot-created-after"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Persistence"
+    stage_ord: 8
+    platform: "Splunk"
+    title: "Everything that survives a reboot, created after the paste"
+    why: "Persistence means a loader or RAT, not only a stealer: this is a foothold, and the ransomware pre-encryption response applies. Look wider than Run keys: the startup folder (Sysmon 11), a task imported from XML (4698 and the schtasks command line), a WMI subscription (Sysmon 19, 20, 21), a new service (System 7045), a DLL dropped beside a signed binary in AppData, and NetSupport's client32.ini."
+    how: null
+    fp: "Installers and updaters register tasks, services and Run values legitimately; keep only what was created after the paste time on that host, and anything whose target path is in AppData, Temp or ProgramData. Sysmon 19 to 21 need the WMI events in your Sysmon config."
+    query: |-
+      index=windows host="<host>" earliest="<paste time>" source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"
+        ((EventCode=13 (TargetObject="*\\CurrentVersion\\Run*" OR TargetObject="*\\Winlogon\\*" OR TargetObject="*\\Image File Execution Options\\*"))
+         OR (EventCode=11 (TargetFilename="*\\Start Menu\\Programs\\Startup\\*" OR TargetFilename="*\\client32.ini" OR TargetFilename="*\\client32.exe" OR (TargetFilename="*\\AppData\\*" TargetFilename="*.dll")))
+         OR EventCode=19 OR EventCode=20 OR EventCode=21
+         OR (EventCode=1 ((Image="*\\schtasks.exe" (CommandLine="*/create*" OR CommandLine="*/xml*")) OR (Image="*\\sc.exe" CommandLine="*create*"))))
+      | table _time EventCode Image TargetObject Details TargetFilename CommandLine
+      index=windows host="<host>" earliest="<paste time>" (source="XmlWinEventLog:Security" EventCode=4698) OR (source="XmlWinEventLog:System" EventCode=7045)
+      | table _time EventCode TaskName TaskContent ServiceName ImagePath SubjectUserName
+    tested: null
+    attack:
+      - "T1547.001"
+      - "T1053.005"
+      - "T1546.003"
+      - "T1543.003"
+      - "T1574.001"
+      - "T1219"
+  - id: "clickfix-response/splunk/s9-other-hosts-that-resolved-the-lure-or-payload-do"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Spread"
+    stage_ord: 9
+    platform: "Splunk"
+    title: "Other hosts that resolved the lure or payload domains, or ran the same command shape"
+    why: "ClickFix pages sit on compromised sites and ads; everyone who visited the same page is a candidate victim, and anyone who pasted gets the same command shape with a different obfuscation. Run the stage-2 search without the host filter too."
+    how: null
+    fp: "A lure on a compromised legitimate site means the domain alone is not proof; pair every DNS hit with the stage-2 process hunt before isolating."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=22
+        (QueryName="*<lure domain>" OR QueryName="*<payload domain>")
+      | stats min(_time) as first_seen dc(host) as hosts values(host) as host_list by QueryName
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 CommandLine="*<distinctive fragment of the pasted command>*"
+      | stats values(User) as users by host CommandLine
+    tested: null
+    attack:
+      - "T1189"
+      - "T1204.004"
+  - id: "clickfix-response/elastic/s1-which-page-served-the-lure"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Elastic / Wazuh"
+    title: "Which page served the lure"
+    why: "The lure URL is the durable indicator and its provenance (search result, ad, compromised site, mail link) decides who else you report it to. Elastic Defend records the browser's DNS; the full URL and the download's referrer come from the browser history (Capture, below) or the proxy."
+    how: null
+    fp: "Five minutes of browser DNS is ads, CDNs and telemetry; read it bottom-up from the paste time and stop at the first domain the user does not recognise. Cached names never appear; the browser history is the authoritative list."
+    query: |-
+      FROM logs-endpoint.events.network-*
+      | WHERE host.name == "<host>" AND process.name IN ("chrome.exe","msedge.exe","firefox.exe","brave.exe") AND dns.question.name IS NOT NULL
+      | WHERE @timestamp >= "<paste time minus 5m>" AND @timestamp <= "<paste time>"
+      | KEEP @timestamp, dns.question.name, process.name
+      | SORT @timestamp
+      // Mail links: Microsoft 365 Defender integration, UrlClickEvents (Safe Links) where url.full contains the lure domain.
+    tested: null
+    attack:
+      - "T1189"
+      - "T1566.002"
+  - id: "clickfix-response/elastic/s2-the-pasted-command-from-the-run-dialog-the-explo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "The pasted command, from the Run dialog, the Explorer address bar or a terminal"
+    why: "This is the pasted command itself. Per-visitor obfuscation means the command and its URLs are your indicators, not a vendor hash. The strongest single signature is the trailing lure comment ( # I am not a robot, # reCAPTCHA Verification ID, # Ray ID, or a fake # C:\\...\\file.pdf in FileFix). Event 400 ( HostApplication, mapped to process.command_line in the powershell dataset) fires once per PowerShell host start and names what started it, which separates a Terminal paste from a script host."
+    how: null
+    fp: "Admin tooling, Intune remediation scripts and installers use -nop -w hidden -ep bypass from explorer.exe daily; the lure comment, a public URL and a non-technical user together are the hit. Exclude your management agents by process.parent.executable or process.code_signature.subject_name, not by flag."
+    query: |-
+      process where event.type == "start" and
+        process.parent.name : ("explorer.exe", "WindowsTerminal.exe", "powershell.exe", "pwsh.exe", "cmd.exe", "conhost.exe") and
+        process.name : ("powershell.exe", "pwsh.exe", "cmd.exe", "mshta.exe", "curl.exe", "msiexec.exe", "certutil.exe", "bitsadmin.exe", "regsvr32.exe", "rundll32.exe", "wscript.exe", "cscript.exe", "conhost.exe", "finger.exe", "ssh.exe") and
+        (process.command_line : ("*http*", "*-enc*", "*-e *", "*-ec *", "*iex*", "*invoke-expression*", "*downloadstring*", "*downloadfile*", "*irm *", "*iwr *",
+                                 "*-w hidden*", "*-w 1*", "*-nop*", "*-ep bypass*", "*-executionpolicy bypass*", "*urlcache*", "*-decode*", "*/transfer*",
+                                 "*--headless*", "*proxycommand*", "*/i:http*", "*scrobj*", "*javascript:*", "*frombase64string*")
+         or process.command_line regex~ """.*#\s*(I am not a robot|reCAPTCHA|Ray ID|Verification|Cloudflare|robot|[A-Z]:\\.+\.(pdf|docx|txt)).*""")
+      // HTA save-as
+      process where event.type == "start" and process.name : "mshta.exe" and
+        process.parent.name : ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "explorer.exe") and process.command_line : ("*\\Downloads\\*", "*.hta*")
+      // Win+R writes RunMRU, FileFix writes TypedPaths
+      registry where registry.path : ("*\\Explorer\\RunMRU\\*", "*\\Explorer\\TypedPaths\\*")
+      // Which host application started PowerShell (event 400, classic Windows PowerShell log)
+      any where event.dataset == "windows.powershell" and event.code == "400" and process.command_line : ("*http*", "*-enc*", "*iex*", "*hidden*", "*bypass*")
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1059.001"
+      - "T1218.005"
+  - id: "clickfix-response/elastic/s2-download-folder-staging-a-browser-download-run-m"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Paste and run"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "Download-folder staging: a browser download run minutes later from a pasted command"
+    why: "In this variant the pasted command is harmless on its own and the payload is the file the browser just saved; the pairing is the finding."
+    how: null
+    fp: "Users run installers from Downloads all day. A hit matters when the download is a script, an archive or an.hta, or the command came from Run or a terminal rather than a double-click."
+    query: |-
+      sequence by host.name with maxspan=10m
+        [file where event.type == "creation" and file.path : "*\\Downloads\\*" and process.name : ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe")]
+        [process where event.type == "start" and
+           process.parent.name : ("explorer.exe", "WindowsTerminal.exe", "powershell.exe", "cmd.exe") and
+           process.command_line : "*\\Downloads\\*"]
+    tested: null
+    attack:
+      - "T1204.004"
+      - "T1204.002"
+  - id: "clickfix-response/elastic/s3-the-decoded-stager-4104-script-block-text-and-lo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Stage 2"
+    stage_ord: 3
+    platform: "Elastic / Wazuh"
+    title: "The decoded stager (4104 script-block text) and loaders from user paths"
+    why: "The command line only shows the obfuscated outer layer. Script-block logging (event 4104) records the decoded text PowerShell actually ran, including the stage-2 URL; Windows writes 4104 at Warning level for suspicious blocks even when the policy is off. The Windows integration lands it in powershell.file.script_block_text."
+    how: null
+    fp: "Configuration-management agents and signed vendor scripts produce 4104 blocks constantly; filter on the host and the paste window first. A block over a few KB of base64 or [char] arithmetic is the stager even if every cmdlet in it looks ordinary."
+    query: |-
+      any where event.dataset == "windows.powershell_operational" and event.code == "4104" and
+        powershell.file.script_block_text : ("*DownloadString*", "*Invoke-WebRequest*", "*iwr *", "*irm *", "*FromBase64String*", "*-join*", "*[char]*", "*Add-MpPreference*", "*Start-BitsTransfer*", "*Expand-Archive*")
+      // Loaders from user-writable paths
+      process where event.type == "start" and
+        process.name : ("mshta.exe", "regsvr32.exe", "rundll32.exe", "curl.exe", "certutil.exe", "bitsadmin.exe", "msiexec.exe") and
+        process.command_line : ("*http*", "*\\AppData\\*", "*\\Temp\\*", "*\\Downloads\\*", "*\\ProgramData\\*", "*-decode*", "*/transfer*")
+    tested: null
+    attack:
+      - "T1059.001"
+      - "T1105"
+      - "T1218.005"
+      - "T1027"
+  - id: "clickfix-response/elastic/s4-what-the-stager-left-behind-new-binaries-sideloa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Payload"
+    stage_ord: 4
+    platform: "Elastic / Wazuh"
+    title: "What the stager left behind: new binaries, sideloaded DLLs and injection from user-writable paths"
+    why: "Stealer, loader or RAT decides the rest of the response. Stealers run once from AppData or Temp and exit; loaders and RATs stay resident, sideload a DLL next to a signed binary, or inject into a legitimate process. NetSupport is client32.exe with client32.ini beside it."
+    how: null
+    fp: "Teams, OneDrive, Zoom and other per-user installers live in AppData\\Local and update themselves; code_signature.trusted == true with a known subject and matching original file name is normal. Untrusted or absent signature with a random name, or a trusted binary loading an untrusted DLL beside it, is the payload."
+    query: |-
+      FROM logs-endpoint.events.process-*
+      | WHERE host.name == "<host>" AND event.type == "start" AND @timestamp >= "<paste time>"
+      | WHERE process.executable RLIKE """(?i).*\\(AppData|Temp|Downloads|ProgramData|Users\\Public)\\.*"""
+      | STATS first = MIN(@timestamp), runs = COUNT(*), parents = VALUES(process.parent.name) BY process.executable, process.hash.sha256, process.code_signature.subject_name, process.code_signature.trusted, process.pe.original_file_name
+      | SORT first
+      // Sideloaded DLLs (EQL)
+      library where host.name == "<host>" and dll.path : ("*\\AppData\\*", "*\\Temp\\*", "*\\ProgramData\\*") and not dll.code_signature.trusted == true
+      // NetSupport by name
+      process where process.name : "client32.exe" or (file where file.name : "client32.ini")
+      // Injection: Sysmon 8 via Winlogbeat:  any where event.code == "8" and event.provider == "Microsoft-Windows-Sysmon"
+    tested: null
+    attack:
+      - "T1574.001"
+      - "T1055"
+      - "T1219"
+  - id: "clickfix-response/elastic/s5-browser-credential-stores-read-by-something-that"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Theft"
+    stage_ord: 5
+    platform: "Elastic / Wazuh"
+    title: "Browser credential stores read by something that is not the browser; the remote-debugging bypass"
+    why: "Since Chrome 127 (App-Bound Encryption) a stealer cannot decrypt cookies by reading the files, so Lumma, StealC and SectopRAT start the browser themselves with --remote-debugging-port and ask it for the cookies. chrome.exe with that flag and a parent that is not explorer.exe or the browser is theft with few false positives."
+    how: null
+    fp: "Developers and test automation (Selenium, Playwright, Puppeteer) start Chrome with --remote-debugging-port from node.exe, python.exe or an IDE; exclude those parents on developer hosts. A stealer that reads the files in place leaves no file event; absence here is not absence of theft."
+    query: |-
+      process where event.type == "start" and
+        process.name : ("chrome.exe", "msedge.exe", "brave.exe") and
+        process.command_line : ("*--remote-debugging-port*", "*--remote-debugging-pipe*", "*--remote-allow-origins*", "*--headless*", "*--user-data-dir*", "*--restore-last-session*") and
+        not process.parent.name : ("explorer.exe", "chrome.exe", "msedge.exe", "brave.exe", "svchost.exe", "userinit.exe")
+      // Profile files copied out of the profile (reads are not logged)
+      file where event.type in ("creation", "change") and
+        file.name : ("Login Data", "Cookies", "Web Data", "Local State", "key4.db", "logins.json", "cookies.sqlite", "places.sqlite") and
+        not file.path : ("*\\User Data\\*", "*\\Firefox\\Profiles\\*")
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1539"
+      - "T1552.001"
+  - id: "clickfix-response/elastic/s6-outbound-connections-from-user-path-binaries-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Exfiltration"
+    stage_ord: 6
+    platform: "Elastic / Wazuh"
+    title: "Outbound connections from user-path binaries and script hosts after the paste"
+    why: "A stealer uploads within minutes of running, usually to plain HTTPS, a Telegram bot or a Discord webhook; a loader's second connection is the next stage. Elastic Defend records the connection and, on the disconnect event, the bytes each side sent."
+    how: null
+    fp: "Teams, OneDrive, Slack and browser updaters in AppData\\Local talk to Microsoft, Slack and Google CDNs; exclude by process.code_signature.subject_name or destination. source.bytes is only populated on the disconnect event; a connection still open shows zero."
+    query: |-
+      FROM logs-endpoint.events.network-*
+      | WHERE host.name == "<host>" AND network.direction == "egress" AND @timestamp >= "<paste time>" AND @timestamp <= "<paste time plus 2h>"
+      | WHERE NOT CIDR_MATCH(destination.ip, "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+      | WHERE process.executable RLIKE """(?i).*\\(AppData|Temp|Downloads|ProgramData|Users\\Public)\\.*"""
+            OR process.name IN ("powershell.exe","pwsh.exe","mshta.exe","curl.exe","rundll32.exe","regsvr32.exe","msbuild.exe","regasm.exe","installutil.exe","BitLockerToGo.exe","more.com")
+      | STATS first = MIN(@timestamp), connections = COUNT(*), bytes_out = SUM(source.bytes), ports = VALUES(destination.port) BY process.executable, destination.ip
+      | SORT first
+    tested: null
+    attack:
+      - "T1041"
+      - "T1567"
+      - "T1071.001"
+  - id: "clickfix-response/elastic/s7-the-host-s-users-signing-in-from-new-ips-or-netw"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Session reuse"
+    stage_ord: 7
+    platform: "Elastic / Wazuh"
+    title: "The host's users signing in from new IPs or networks"
+    why: "Stolen cookies and passwords are used from the attacker's infrastructure, often days later after resale, and a replayed cookie is a non-interactive sign-in with no MFA prompt. Entra keeps 30 d on P1/P2 and 7 d free at the source; the Azure integration lands both sign-in categories in logs-azure.signinlogs-*. Okta and Google Workspace integrations answer the same question in their own datasets."
+    how: null
+    fp: "Mobile networks and VPN egress rotate IPs; a new IP in the same ASN and country is usually the user. A new ASN, a hosting provider, or a non-interactive sign-in from an IP the interactive logs never show is the replay."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE azure.signinlogs.properties.user_principal_name IN ("<upn1>", "<upn2>") AND event.outcome == "success"
+      | STATS first_seen = MIN(@timestamp), events = COUNT(*), kinds = VALUES(azure.signinlogs.category), apps = VALUES(azure.signinlogs.properties.app_display_name)
+          BY azure.signinlogs.properties.user_principal_name, source.ip, source.as.organization.name
+      | SORT first_seen
+      // Okta:  FROM logs-okta.system-* | WHERE event.action == "user.session.start" AND user.email == "<upn>" | STATS MIN(@timestamp), COUNT(*) BY source.ip, source.geo.country_name
+      // Google Workspace:  FROM logs-google_workspace.login-* | WHERE event.action == "login_success" AND user.email == "<upn>" | STATS MIN(@timestamp), COUNT(*) BY source.ip
+    tested: null
+    attack:
+      - "T1550.004"
+      - "T1078.004"
+  - id: "clickfix-response/elastic/s8-everything-that-survives-a-reboot-created-after"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Persistence"
+    stage_ord: 8
+    platform: "Elastic / Wazuh"
+    title: "Everything that survives a reboot, created after the paste"
+    why: "Persistence means a loader or RAT, not only a stealer: this is a foothold, and the ransomware pre-encryption response applies. Look wider than Run keys: the startup folder, a task imported from XML, a WMI subscription (Sysmon 19 to 21 through Winlogbeat; Elastic Defend has no native WMI subscription event), a new service (System 7045), a DLL dropped beside a signed binary in AppData, and NetSupport's client32.ini."
+    how: null
+    fp: "Installers and updaters register tasks, services and Run values legitimately; keep only what was created after the paste time on that host, and anything whose target path is in AppData, Temp or ProgramData. For the full read-only diff run Get-PersistenceSnapshot.ps1 through the response console (Capture, below)."
+    query: |-
+      registry where host.name == "<host>" and registry.path : ("*\\CurrentVersion\\Run\\*", "*\\CurrentVersion\\RunOnce\\*", "*\\Winlogon\\*", "*\\Image File Execution Options\\*")
+      file where host.name == "<host>" and event.type == "creation" and
+        (file.path : "*\\Start Menu\\Programs\\Startup\\*" or file.name : ("client32.exe", "client32.ini") or (file.path : "*\\AppData\\*" and file.extension : "dll"))
+      process where host.name == "<host>" and event.type == "start" and
+        ((process.name : "schtasks.exe" and process.command_line : ("*/create*", "*/xml*")) or (process.name : "sc.exe" and process.command_line : "*create*") or
+         (process.name : ("wmic.exe", "powershell.exe") and process.command_line : ("*EventFilter*", "*CommandLineEventConsumer*")))
+      any where host.name == "<host>" and ((event.code == "4698" and winlog.channel == "Security") or (event.code == "7045" and winlog.channel == "System") or (event.code in ("19", "20", "21") and event.provider == "Microsoft-Windows-Sysmon"))
+      library where host.name == "<host>" and dll.path : "*\\AppData\\*" and not dll.code_signature.trusted == true
+    tested: null
+    attack:
+      - "T1547.001"
+      - "T1053.005"
+      - "T1546.003"
+      - "T1543.003"
+      - "T1574.001"
+      - "T1219"
+  - id: "clickfix-response/elastic/s9-other-hosts-that-resolved-the-lure-or-payload-do"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Spread"
+    stage_ord: 9
+    platform: "Elastic / Wazuh"
+    title: "Other hosts that resolved the lure or payload domains, or ran the same command shape"
+    why: "ClickFix pages sit on compromised sites and ads; everyone who visited the same page is a candidate victim, and anyone who pasted gets the same command shape with a different obfuscation. Run the stage-2 query without the host filter too."
+    how: null
+    fp: "A lure on a compromised legitimate site means the domain alone is not proof; pair every DNS hit with the stage-2 process hunt before isolating."
+    query: |-
+      FROM logs-endpoint.events.network-*
+      | WHERE dns.question.name LIKE "*<lure domain>" OR dns.question.name LIKE "*<payload domain>"
+      | STATS first = MIN(@timestamp), hosts = COUNT_DISTINCT(host.name), host_list = VALUES(host.name) BY dns.question.name
+      FROM logs-endpoint.events.process-*
+      | WHERE process.command_line LIKE "*<distinctive fragment of the pasted command>*"
+      | STATS hosts = VALUES(host.name), users = VALUES(user.name) BY process.command_line
+    tested: null
+    attack:
+      - "T1189"
+      - "T1204.004"
+steps:
+  - ord: 1
+    time: "T+0–10 min"
+    title: "Isolate the host — keep it running"
+    why: "EDR network isolation, or pull the network cable. Do not shut it down. Why: a stealer uploads what it found within minutes and a loader fetches the next stage; isolation stops both. The decoded stager may only exist in memory, because every visitor gets a uniquely obfuscated payload."
+    critical: true
+  - ord: 2
+    time: "T+10–20 min"
+    title: "Capture the command that was pasted"
+    why: "Win+R leaves the command in RunMRU (only when the launch succeeded; a failed launch writes nothing); FileFix leaves it in TypedPaths; a Win+X or Terminal paste leaves it in the PowerShell history file and in script-block logging (event 4104, the decoded stager); the EDR process tree has the outer layer either way. Windows Timeline's ActivitiesCache.db keeps the clipboard text even when the stager wiped RunMRU. Note any file created in Downloads just before. Why: vendor hashes will not match your payload — your command, the URLs in it and the lure page are the indicators. Collect the browser profile too ( History with its downloads table for the referrer, Login Data, Cookies, Local State; Firefox places.sqlite ): it tells you which accounts and sessions were on the host. For memory and the volatile triage, run Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d elevated from removable media or push it with your EDR; for the persistence baseline, Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df with -Zip. The platform tabs below list the per-tool commands, Prefetch, Amcache, SRUM and USN included."
+    critical: true
+  - ord: 3
+    time: "T+15–30 min"
+    title: "Treat every secret on the host as stolen"
+    why: "For every user who signed in on that machine: revoke sessions and reset the password from a clean device, in either order but both within minutes ( Identity Breach Response ). In Entra, Revoke-MgUserSignInSession kills refresh tokens; issued access tokens live up to an hour, so disable the account first if the user is privileged. On an Entra-joined device the Primary Refresh Token stays in the TPM and is not what a browser stealer takes; the device-bound cookies derived from it are, and the revoke covers those. Entra is one session in that browser profile, not the only one: sign the user out of Google Workspace, Okta, Slack, GitHub (and rotate PATs), the AWS console (deactivate access keys, re-issue MFA) and the password manager's desktop and extension sessions, and tell the user to do the same for personal accounts in the same browser. Then rotate what the browser and disk held: saved passwords for business apps, VPN profiles, SSH keys, API tokens, password-manager exports, crypto wallets. Why: a stealer takes all of it in one pass, and the attacker uses or sells it within hours."
+    critical: true
+  - ord: 4
+    time: "T+30–60 min"
+    title: "Block the lure and find the other victims"
+    why: "Take the lure site from the browser history and the payload URLs from the command; block them at DNS and the proxy; search the fleet for the same domains and the same command shape. Then settle the provenance — search result (SEO poisoning), ad (malvertising), compromised legitimate site, or a mail link — and report it: Google Safe Browsing for the URL, Google Ads or Microsoft Advertising if the referrer was an ad, the site owner if the site is legitimate, and your sector ISAC. Why: ClickFix lures run on compromised legitimate sites and ads; if one user got it, others visited the same page, and the report is what takes the page down for everyone outside your fleet."
+    critical: true
+actions:
+  - platform: "Defender XDR / Sentinel"
+    label: "T+0–10 · Isolate"
+    name: "Isolate every host that ran the command"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the hunts above list every device that ran the same command shape or reached the lure; isolating only the host that reported it leaves the others uploading."
+    how: "Console: device page › Isolate device (Full), for each device in the hunt result. Live Response keeps working on an isolated device. API: one call per device ID."
+    body: |-
+      POST https://api.security.microsoft.com/api/machines/{id}/isolate
+      {"Comment": "ClickFix IR case #<n>", "IsolationType": "Full"}
+    attack:
+      - "T1041"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+10–20 · Capture"
+    name: "Collect the command, the browser profile, memory and the persistence snapshot (Live Response)"
+    tier: "write"
+    tier_inferred: false
+    why: "the pasted command and the URLs in it are your indicators, and they are gone once the host is re-imaged. The browser profile tells you which accounts and sessions were on the host; ActivitiesCache.db keeps the clipboard text even when the stager wiped RunMRU; Prefetch, Amcache, SRUM and the USN journal show what ran, when, and how much it sent. The decoded stager and the stealer's config may only exist in memory."
+    how: "Live Response. getfile cannot read a file the browser holds open, so take the browser files from the investigation package or after the user closes the browser. putfile uploads from the Library; add Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d and Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df to it in peacetime. Also export now: the 30 days of Entra sign-ins for every user of the host ( Get-MgAuditLogSignIn -Filter \"userPrincipalName eq '<upn>'\" ) and the unified audit log ( Search-UnifiedAuditLog, 180 d Standard, 1 y Premium), before retention takes them."
+    body: |-
+      registry "HKEY_USERS\<SID>\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
+      registry "HKEY_USERS\<SID>\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths"
+      getfile "C:\Users\<user>\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"
+      getfile "C:\Users\<user>\Downloads\<file>"
+      getfile "C:\Users\<user>\AppData\Local\ConnectedDevicesPlatform\<id>\ActivitiesCache.db"
+      getfile "C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\History"        (table downloads: referrer and tab_url)
+      getfile "C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Login Data"
+      getfile "C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Network\Cookies"
+      getfile "C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Local State"
+      getfile "C:\Users\<user>\AppData\Roaming\Mozilla\Firefox\Profiles\<profile>\places.sqlite"
+      getfile "C:\Windows\System32\sru\SRUDB.dat"
+      getfile "C:\Windows\appcompat\Programs\Amcache.hve"
+      collect                                     (investigation package: Prefetch, autoruns, tasks, services, network, event logs)
+      putfile Get-PersistenceSnapshot.ps1
+      run Get-PersistenceSnapshot.ps1 -parameters "-Zip -OutputPath C:\IR"
+      putfile MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      run MagnetRESPONSEv172_Self_Extracting_Archive.exe -parameters "/accepteula /unattended /output:C:\IR /caseref:<n> /captureram /capturepagefile /capturevolatile /saveitems"
+      getfile "C:\IR\<snapshot>.zip"
+      persistence
+    attack:
+      - "T1204.004"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+15–30 · Secrets"
+    name: "Revoke sessions and reset passwords for every user on those hosts, everywhere the browser was signed in"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stolen session cookies keep working after a password reset; Defender for Endpoint has no action that revokes them. Entra is one of the sessions in that browser profile, not the only one. The order (reset then revoke, or revoke then reset) matters less than doing both within minutes; a revoke without a reset is undone by the stolen password, a reset without a revoke is undone by the stolen cookie."
+    how: "Entra: Revoke-MgUserSignInSession kills refresh tokens; issued access tokens live up to an hour (longer with CAE-capable clients), so disable the account first if the user is privileged ( Identity Breach Response ). On an Entra-joined device the Primary Refresh Token lives in the TPM and is not stolen by a browser stealer, but the device-bound session cookies derived from it are; revoke covers those. Then, per account the browser held: Google Workspace (Admin console › user › Security › Sign out), Okta ( DELETE /api/v1/users/{id}/sessions ), Slack (Admin › sign out of all sessions), GitHub (Settings › Sessions, and rotate PATs), AWS console (deactivate the access keys, re-issue MFA), password-manager desktop and browser-extension sessions (deauthorise the device in the vault's admin console). Tell the user to do the same for personal accounts in the same browser."
+    body: "Revoke-MgUserSignInSession -UserId <upn>"
+    attack:
+      - "T1550.004"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+30–60 · Block"
+    name: "Block the lure and payload domains tenant-wide, and report the lure"
+    tier: "destructive"
+    tier_inferred: false
+    why: "other users visited the same page. The domains are the durable indicator; a payload hash only matches your copy, because every visitor gets a uniquely obfuscated stager. Reporting is what takes the lure down for everyone else."
+    how: "Console: Settings › Endpoints › Indicators. Outside Edge, domain and URL blocks need Network Protection in block mode. Set an expiry: lures run on compromised legitimate sites. Then report the lure URL to Google Safe Browsing (safebrowsing.google.com/safebrowsing/report_phish), to Google Ads or Microsoft Advertising if the referrer was an ad, to the site owner if it is a compromised legitimate site, and to your sector ISAC."
+    body: |-
+      POST https://api.security.microsoft.com/api/indicators
+      {"indicatorValue": "<lure or payload domain>", "indicatorType": "DomainName",
+       "action": "Block", "title": "ClickFix lure", "description": "IR case #<n>",
+       "expirationTime": "<yyyy-mm-dd>T00:00:00Z"}
+    attack:
+      - "T1189"
+  - platform: "Defender XDR / Sentinel"
+    label: "Hour 1+ · Rebuild"
+    name: "Stop the running payload, then rebuild"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stopping the process ends the upload and keeps the file as evidence. Rebuild when any of these is true: persistence was created, the payload is a loader or RAT, a legitimate process was injected, more than one family was dropped, the user is privileged, or the process tree has a gap you cannot explain. Quarantine-and-reboot is enough only when the EDR stopped the stager before stage 2 and nothing was written or connected; even then, the secrets are still rotated."
+    how: "Lift isolation only on a rebuilt host, or on one the hunt clears."
+    body: "remediate process <pid>"
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "T+0–10 · Isolate"
+    name: "Contain every host that ran the command, in one call"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the hunts above list every host that ran the same command shape or reached the lure; containing only the one that reported it leaves the others uploading."
+    how: "Console: Host management › select the hosts › Network contain. RTR keeps working on a contained host."
+    body: |-
+      POST /devices/entities/devices-actions/v2?action_name=contain
+      {"ids": ["<AID>", "<AID>"]}
+    attack:
+      - "T1041"
+  - platform: "CrowdStrike Falcon"
+    label: "T+10–20 · Capture"
+    name: "Collect the command, the browser profile, memory and the persistence snapshot (RTR, Active Responder)"
+    tier: "write"
+    tier_inferred: false
+    why: "the pasted command and the URLs in it are your indicators; the browser profile says which accounts and sessions were on the host; ActivitiesCache.db keeps the clipboard text when RunMRU was wiped; Prefetch, Amcache, SRUM and the USN journal show what ran and how much it sent; the decoded stager and the stealer's config may only exist in memory."
+    how: "Put Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df in the RTR script library and Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d in the put-files library in peacetime. xmemdump takes full memory natively if you prefer. Browser files are locked while the browser runs; cp them first or take them after the user closes it. Also export the 30 days of Entra sign-ins for every user of the host ( Get-MgAuditLogSignIn ) before retention takes them."
+    body: |-
+      reg query "HKEY_USERS\<SID>\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
+      reg query "HKEY_USERS\<SID>\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths"
+      get "C:\Users\<user>\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"
+      get "C:\Users\<user>\Downloads\<file>"
+      get "C:\Users\<user>\AppData\Local\ConnectedDevicesPlatform\<id>\ActivitiesCache.db"
+      get "C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\History"
+      get "C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Login Data"
+      get "C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Network\Cookies"
+      get "C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Local State"
+      get "C:\Users\<user>\AppData\Roaming\Mozilla\Firefox\Profiles\<profile>\places.sqlite"
+      get "C:\Windows\System32\sru\SRUDB.dat"
+      get "C:\Windows\appcompat\Programs\Amcache.hve"
+      get "C:\Windows\Prefetch\<PAYLOAD>-<hash>.pf"
+      runscript -CloudFile="Get-PersistenceSnapshot" -CommandLine="-Zip -OutputPath C:\IR"
+      put MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      run "C:\MagnetRESPONSEv172_Self_Extracting_Archive.exe" -CommandLine="/accepteula /unattended /output:C:\IR /caseref:<n> /captureram /capturepagefile /capturevolatile /saveitems"
+      memdump <pid>
+      xmemdump complete C:\IR\<host>.mem
+    attack:
+      - "T1204.004"
+  - platform: "CrowdStrike Falcon"
+    label: "T+15–30 · Secrets"
+    name: "Revoke sessions and reset passwords for every user on those hosts, everywhere the browser was signed in"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stolen session cookies keep working after a password reset, and no Falcon host action revokes them. Entra is one of the sessions in that browser profile, not the only one. Reset then revoke, or revoke then reset, both within minutes; one without the other is undone by what was stolen."
+    how: "Entra: Revoke-MgUserSignInSession (refresh tokens; access tokens live up to an hour, disable first if privileged), or a Fusion SOAR workflow built and tested beforehand; then reset from a clean device ( Identity Breach Response ). The PRT on an Entra-joined device stays in the TPM; the browser's device-bound cookies derived from it are what the revoke covers. Then, per account the browser held: Google Workspace (Admin console › user › Security › Sign out), Okta ( DELETE /api/v1/users/{id}/sessions ), Slack (sign out of all sessions), GitHub (Sessions, and rotate PATs), AWS console (deactivate keys, re-issue MFA), password-manager desktop and extension sessions (deauthorise the device). Tell the user to do the same for personal accounts in the same browser."
+    body: "Revoke-MgUserSignInSession -UserId <upn>"
+    attack:
+      - "T1550.004"
+  - platform: "CrowdStrike Falcon"
+    label: "T+30–60 · Block"
+    name: "Block the lure and the payload, and report the lure"
+    tier: "destructive"
+    tier_inferred: false
+    why: "other users visited the same page. Falcon custom IOCs can only detect domains and IPs, not block them, so the lure and payload domains are blocked at DNS and the proxy; a hash IOC can prevent, but only matches your copy of the uniquely obfuscated stager. Reporting is what takes the lure down for everyone else."
+    how: "Console: Endpoint security › IOC management. Set an expiry. Report the lure URL to Google Safe Browsing, to Google Ads or Microsoft Advertising if the referrer was an ad, to the site owner if it is a compromised legitimate site, and to your sector ISAC."
+    body: |-
+      POST /iocs/entities/indicators/v1
+      {"indicators": [{"type": "sha256", "value": "<payload sha256>", "action": "prevent",
+        "severity": "high", "platforms": ["windows"], "applied_globally": true,
+        "expiration": "<yyyy-mm-dd>T00:00:00Z", "description": "ClickFix IR case #<n>"}]}
+    attack:
+      - "T1189"
+  - platform: "CrowdStrike Falcon"
+    label: "Hour 1+ · Rebuild"
+    name: "Stop the running payload, then rebuild"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stopping the process ends the upload and keeps the file as evidence. Rebuild when any of these is true: persistence was created, the payload is a loader or RAT, a legitimate process was injected, more than one family was dropped, the user is privileged, or the process tree has a gap you cannot explain. Quarantine-and-reboot is enough only when the sensor stopped the stager before stage 2 and nothing was written or connected; the secrets are rotated either way."
+    how: "Lift containment only on a rebuilt host, or on one the hunt clears."
+    body: "kill <pid>"
+    attack: []
+  - platform: "SentinelOne"
+    label: "T+0–10 · Isolate"
+    name: "Disconnect every host that ran the command, in one call"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the hunts above list every endpoint that ran the same command shape or reached the lure; disconnecting only the one that reported it leaves the others uploading."
+    how: "Console: select the endpoints › Actions › Disconnect from network. The management connection stays up."
+    body: |-
+      POST /web/api/v2.1/agents/actions/disconnect
+      {"filter": {"ids": ["<agent id>", "<agent id>"]}}
+    attack:
+      - "T1041"
+  - platform: "SentinelOne"
+    label: "T+10–20 · Capture"
+    name: "Collect the command, the browser profile, memory and the persistence snapshot (Fetch Files, RemoteOps)"
+    tier: "write"
+    tier_inferred: false
+    why: "the pasted command and the URLs in it are your indicators; the browser profile says which accounts and sessions were on the host; ActivitiesCache.db keeps the clipboard text when RunMRU was wiped; Prefetch, Amcache, SRUM and the USN journal show what ran and how much it sent; the decoded stager and the stealer's config may only exist in memory."
+    how: "Fetch Files for the list below (NTUSER.DAT carries RunMRU and TypedPaths; browser files are locked while the browser runs, so fetch after the user closes it or take the copy RemoteOps makes). RemoteOps: upload Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df as a custom script with -Zip, and a short wrapper script that fetches Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d from your internal share and runs it unattended for RAM, pagefile and volatile triage; both scripts return their output as the script result. Also export the 30 days of Entra sign-ins for every user of the host ( Get-MgAuditLogSignIn ) before retention takes them."
+    body: |-
+      C:\Users\<user>\NTUSER.DAT                                            (RunMRU, TypedPaths; locked: fetch takes a shadow copy)
+      C:\Users\<user>\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
+      C:\Users\<user>\Downloads\<file>
+      C:\Users\<user>\AppData\Local\ConnectedDevicesPlatform\<id>\ActivitiesCache.db
+      C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\History
+      C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Login Data
+      C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Network\Cookies
+      C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Local State
+      C:\Users\<user>\AppData\Roaming\Mozilla\Firefox\Profiles\<profile>\places.sqlite
+      C:\Windows\System32\sru\SRUDB.dat
+      C:\Windows\appcompat\Programs\Amcache.hve
+      C:\Windows\Prefetch\<PAYLOAD>-<hash>.pf
+      RemoteOps:  Get-PersistenceSnapshot.ps1 -Zip -OutputPath C:\IR
+      RemoteOps:  MagnetRESPONSE.exe /accepteula /unattended /output:C:\IR /caseref:<n> /captureram /capturepagefile /capturevolatile /saveitems
+      Remote Shell:  reg query "HKEY_USERS\<SID>\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
+    attack:
+      - "T1204.004"
+  - platform: "SentinelOne"
+    label: "T+15–30 · Secrets"
+    name: "Revoke sessions and reset passwords for every user on those hosts, everywhere the browser was signed in"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stolen session cookies keep working after a password reset, and the agent has no action that revokes them. Entra is one of the sessions in that browser profile, not the only one. Reset then revoke, or revoke then reset, both within minutes; one without the other is undone by what was stolen."
+    how: "Entra: Revoke-MgUserSignInSession (refresh tokens; access tokens live up to an hour, disable first if privileged), then reset from a clean device ( Identity Breach Response ). The PRT on an Entra-joined device stays in the TPM; the browser's device-bound cookies derived from it are what the revoke covers. Then, per account the browser held: Google Workspace (Admin console › user › Security › Sign out), Okta ( DELETE /api/v1/users/{id}/sessions ), Slack (sign out of all sessions), GitHub (Sessions, and rotate PATs), AWS console (deactivate keys, re-issue MFA), password-manager desktop and extension sessions (deauthorise the device). Tell the user to do the same for personal accounts in the same browser."
+    body: "Revoke-MgUserSignInSession -UserId <upn>"
+    attack:
+      - "T1550.004"
+  - platform: "SentinelOne"
+    label: "T+30–60 · Block"
+    name: "Block the lure and the payload, and report the lure"
+    tier: "destructive"
+    tier_inferred: false
+    why: "other users visited the same page. The domains are the durable indicator and are blocked at DNS and the proxy; a blocklisted hash only matches your copy of the uniquely obfuscated stager. Reporting is what takes the lure down for everyone else."
+    how: "Add the payload's SHA1 to the Blocklist at Global or Account scope, with a description naming the case. Report the lure URL to Google Safe Browsing, to Google Ads or Microsoft Advertising if the referrer was an ad, to the site owner if it is a compromised legitimate site, and to your sector ISAC."
+    body: ""
+    attack:
+      - "T1189"
+  - platform: "SentinelOne"
+    label: "Hour 1+ · Rebuild"
+    name: "Stop the running payload, then rebuild"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stopping the process ends the upload and keeps the file as evidence. Rebuild when any of these is true: persistence was created, the payload is a loader or RAT, a legitimate process was injected, more than one family was dropped, the user is privileged, or the Storyline has a gap you cannot explain. Quarantine-and-reboot is enough only when the agent stopped the stager before stage 2 and nothing was written or connected; the secrets are rotated either way."
+    how: "Threat › Mitigation: Kill, Quarantine. Reconnect only a rebuilt host, or one the hunt clears."
+    body: ""
+    attack: []
+  - platform: "Velociraptor"
+    label: "T+0–10 · Isolate"
+    name: "Quarantine every host that ran the command, by label"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the hunts above list every client that ran the same command shape or reached the lure; a hunt matched by label quarantines them all, and picks up any host you label later while it runs."
+    how: "Label each client from the hunt result (for example ir-clickfix ), then Hunt Manager › New Hunt › Match by Label › ir-clickfix, collecting the artifact below. The firewall policy only allows the Velociraptor server; collect it again with RemovePolicy = true to lift it."
+    body: "Windows.Remediation.Quarantine"
+    attack:
+      - "T1041"
+  - platform: "Velociraptor"
+    label: "T+10–20 · Capture"
+    name: "Collect the command, the browser profile, the execution artefacts, full memory and the persistence snapshot"
+    tier: "write"
+    tier_inferred: false
+    why: "the pasted command and the URLs in it are your indicators; the browser profile says which accounts and sessions were on the host; ActivitiesCache.db keeps the clipboard text when RunMRU was wiped; Prefetch, Amcache, SRUM and the USN journal show what ran and how much it sent; the decoded stager and the stealer's config may only exist in memory."
+    how: "Windows.Memory.Acquisition takes full memory with WinPmem and uploads it; use Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d instead when you also want the pagefile and a volatile triage in one package, run elevated from removable media or through Windows.System.PowerShell. Stage Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df on the host the same way. Also export the 30 days of Entra sign-ins for every user of the host ( Get-MgAuditLogSignIn ) before retention takes them."
+    body: |-
+      Windows.Timeline.Registry.RunMRU
+      Windows.Registry.NTUser                (KeyGlob = Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths\*)
+      Windows.System.Powershell.PSReadline   (UploadFiles = true)
+      Windows.Forensics.Timeline             (ActivitiesCache.db, clipboard)
+      Windows.KapeFiles.Targets              (Chrome, Edge, Firefox, WindowsTimeline, Prefetch, Amcache, SRUM, RegistryHives, EventLogs)
+      Windows.Forensics.Usn                  (DateAfter = <paste time>)
+      Windows.Memory.Acquisition             (full memory)  or  Windows.Memory.ProcessDump (ProcessRegex / PidRegex)
+      Windows.System.PowerShell              (Command = C:\IR\Get-PersistenceSnapshot.ps1 -Zip -OutputPath C:\IR)
+      Windows.Sys.StartupItems, Windows.System.TaskScheduler, Windows.System.Services, Windows.Persistence.PermanentWMIEvents
+    attack:
+      - "T1204.004"
+  - platform: "Velociraptor"
+    label: "T+15–30 · Secrets"
+    name: "Revoke sessions and reset passwords for every user on those hosts, everywhere the browser was signed in"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stolen session cookies keep working after a password reset; that is an identity action, not an endpoint one. Entra is one of the sessions in that browser profile, not the only one. Reset then revoke, or revoke then reset, both within minutes; one without the other is undone by what was stolen."
+    how: "Entra: Revoke-MgUserSignInSession (refresh tokens; access tokens live up to an hour, disable first if privileged), then reset from a clean device ( Identity Breach Response ). The PRT on an Entra-joined device stays in the TPM; the browser's device-bound cookies derived from it are what the revoke covers. Then, per account the browser held: Google Workspace (Admin console › user › Security › Sign out), Okta ( DELETE /api/v1/users/{id}/sessions ), Slack (sign out of all sessions), GitHub (Sessions, and rotate PATs), AWS console (deactivate keys, re-issue MFA), password-manager desktop and extension sessions (deauthorise the device). Tell the user to do the same for personal accounts in the same browser."
+    body: "Revoke-MgUserSignInSession -UserId <upn>"
+    attack:
+      - "T1550.004"
+  - platform: "Velociraptor"
+    label: "T+30–60 · Block"
+    name: "Block the lure and payload domains, and report the lure"
+    tier: "destructive"
+    tier_inferred: false
+    why: "other users visited the same page, and Velociraptor has no fleet-wide block. Reporting is what takes the lure down for everyone else."
+    how: "Block the domains at DNS and the proxy, and the payload in your EDR if you have one. Report the lure URL to Google Safe Browsing, to Google Ads or Microsoft Advertising if the referrer was an ad, to the site owner if it is a compromised legitimate site, and to your sector ISAC."
+    body: ""
+    attack:
+      - "T1189"
+  - platform: "Velociraptor"
+    label: "Hour 1+ · Rebuild"
+    name: "Stop the running payload, then rebuild"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stopping the process ends the upload and keeps the file as evidence. Rebuild when any of these is true: persistence was created, the payload is a loader or RAT, a legitimate process was injected, more than one family was dropped, the user is privileged, or the timeline has a gap you cannot explain. Quarantine-and-reboot is enough only when nothing was written or connected after the paste; the secrets are rotated either way."
+    how: "Lift the quarantine only on a rebuilt host, or on one the hunt clears."
+    body: |-
+      Windows.System.PowerShell
+        Command = Stop-Process -Id <pid> -Force
+    attack: []
+  - platform: "Splunk"
+    label: "T+0–60 · Contain"
+    name: "Act from the EDR and Entra, on the whole hunt result"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Splunk is where you hunt, not where you act. The hunts above give the full list of hosts and users; hand that list over, not just the host that reported it."
+    how: "Isolate every listed host and collect in the EDR (RunMRU, TypedPaths, the PowerShell history file, the browser profile, ActivitiesCache.db, Prefetch, Amcache, SRUM, memory; the Defender, Falcon, SentinelOne and Velociraptor tabs list the commands, and Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df takes the persistence snapshot); revoke sessions and reset passwords for every listed user in Entra and in every other service the browser held (Google Workspace, Okta, Slack, GitHub, AWS console, the password manager); block the lure and payload domains at DNS and the proxy; report the lure to Google Safe Browsing, the ad network, the site owner and your ISAC. With Splunk SOAR, the EDR's isolate action runs from the playbook against the whole list."
+    body: ""
+    attack:
+      - "T1041"
+  - platform: "Splunk"
+    label: "T+10–20 · Capture"
+    name: "Preserve the search results and the identity logs before retention moves"
+    tier: "write"
+    tier_inferred: false
+    why: "your Sysmon index may roll in days and Entra sign-ins roll at 30 d (P1/P2) or 7 d (free); a lookup written now is evidence that survives both, and the sign-in export covers the resale window."
+    how: "Append | outputlookup clickfix_<case>_<stage>.csv to each hunt above and store the files with the case. Export the sign-ins from Entra directly as well: Get-MgAuditLogSignIn -Filter \"userPrincipalName eq '<upn>'\" -All, and the unified audit log ( Search-UnifiedAuditLog -UserIds <upn> -StartDate... -EndDate..., 180 d Standard, 1 y Premium)."
+    body: |-
+      ... | outputlookup clickfix_<case>_stage2.csv
+      Get-MgAuditLogSignIn -Filter "userPrincipalName eq '<upn>'" -All | Export-Csv clickfix_<case>_signins.csv
+    attack:
+      - "T1204.004"
+  - platform: "Elastic / Wazuh"
+    label: "T+0–10 · Isolate"
+    name: "Isolate every host that ran the command, in one call"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the hunts above list every host that ran the same command shape or reached the lure; isolating only the one that reported it leaves the others uploading."
+    how: "Elastic Defend console: host › Take action › Isolate host (response console: isolate ). Wazuh: an isolation active-response script run through PUT /active-response; Wazuh ships no isolation script, so write and test one before you need it."
+    body: |-
+      POST /api/endpoint/action/isolate
+      {"endpoint_ids": ["<endpoint id>", "<endpoint id>"], "comment": "ClickFix IR case #<n>"}
+    attack:
+      - "T1041"
+  - platform: "Elastic / Wazuh"
+    label: "T+10–20 · Capture"
+    name: "Collect the command, the browser profile, memory and the persistence snapshot (response console)"
+    tier: "write"
+    tier_inferred: false
+    why: "the pasted command and the URLs in it are your indicators; the browser profile says which accounts and sessions were on the host; ActivitiesCache.db keeps the clipboard text when RunMRU was wiped; Prefetch, Amcache, SRUM and the USN journal show what ran and how much it sent; the decoded stager and the stealer's config may only exist in memory."
+    how: "upload puts a file on the host and execute runs it; stage Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df and Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d that way. Browser files are locked while the browser runs; copy them with execute first. Wazuh has no file retrieval; use an active-response script that copies the same list to a share. Also export the 30 days of Entra sign-ins for every user of the host ( Get-MgAuditLogSignIn ) before retention takes them."
+    body: |-
+      execute --command "reg export HKU\<SID>\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU C:\IR\runmru.reg"
+      execute --command "reg export HKU\<SID>\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths C:\IR\typedpaths.reg"
+      get-file --path "C:\Users\<user>\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"
+      get-file --path "C:\Users\<user>\Downloads\<file>"
+      get-file --path "C:\Users\<user>\AppData\Local\ConnectedDevicesPlatform\<id>\ActivitiesCache.db"
+      execute --command "cmd /c copy \"C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\History\" C:\IR\ & copy \"C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Login Data\" C:\IR\ & copy \"C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Network\Cookies\" C:\IR\ & copy \"C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Local State\" C:\IR\"
+      get-file --path "C:\Users\<user>\AppData\Roaming\Mozilla\Firefox\Profiles\<profile>\places.sqlite"
+      get-file --path "C:\Windows\System32\sru\SRUDB.dat"
+      get-file --path "C:\Windows\appcompat\Programs\Amcache.hve"
+      get-file --path "C:\Windows\Prefetch\<PAYLOAD>-<hash>.pf"
+      upload --file Get-PersistenceSnapshot.ps1
+      execute --command "powershell -ep Bypass -File C:\Windows\Temp\Get-PersistenceSnapshot.ps1 -Zip -OutputPath C:\IR"
+      upload --file MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      execute --command "C:\Windows\Temp\MagnetRESPONSEv172_Self_Extracting_Archive.exe /accepteula /unattended /output:C:\IR /caseref:<n> /captureram /capturepagefile /capturevolatile /saveitems" --timeout 60m
+      processes
+    attack:
+      - "T1204.004"
+  - platform: "Elastic / Wazuh"
+    label: "T+15–30 · Secrets"
+    name: "Revoke sessions and reset passwords for every user on those hosts, everywhere the browser was signed in"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stolen session cookies keep working after a password reset; that is an identity action, not an endpoint one. Entra is one of the sessions in that browser profile, not the only one. Reset then revoke, or revoke then reset, both within minutes; one without the other is undone by what was stolen."
+    how: "Entra: Revoke-MgUserSignInSession (refresh tokens; access tokens live up to an hour, disable first if privileged), then reset from a clean device ( Identity Breach Response ). The PRT on an Entra-joined device stays in the TPM; the browser's device-bound cookies derived from it are what the revoke covers. Then, per account the browser held: Google Workspace (Admin console › user › Security › Sign out), Okta ( DELETE /api/v1/users/{id}/sessions ), Slack (sign out of all sessions), GitHub (Sessions, and rotate PATs), AWS console (deactivate keys, re-issue MFA), password-manager desktop and extension sessions (deauthorise the device). Tell the user to do the same for personal accounts in the same browser."
+    body: "Revoke-MgUserSignInSession -UserId <upn>"
+    attack:
+      - "T1550.004"
+  - platform: "Elastic / Wazuh"
+    label: "T+30–60 · Block"
+    name: "Block the lure and the payload, and report the lure"
+    tier: "destructive"
+    tier_inferred: false
+    why: "other users visited the same page. The domains are the durable indicator and are blocked at DNS and the proxy; a blocklisted hash only matches your copy of the uniquely obfuscated stager. Reporting is what takes the lure down for everyone else."
+    how: "Assets › Blocklist › Add blocklist entry, field Hash (MD5, SHA-1 or SHA-256). Report the lure URL to Google Safe Browsing, to Google Ads or Microsoft Advertising if the referrer was an ad, to the site owner if it is a compromised legitimate site, and to your sector ISAC."
+    body: ""
+    attack:
+      - "T1189"
+  - platform: "Elastic / Wazuh"
+    label: "Hour 1+ · Rebuild"
+    name: "Stop the running payload, then rebuild"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stopping the process ends the upload and keeps the file as evidence. Rebuild when any of these is true: persistence was created, the payload is a loader or RAT, a legitimate process was injected, more than one family was dropped, the user is privileged, or the process tree has a gap you cannot explain. Quarantine-and-reboot is enough only when Defend stopped the stager before stage 2 and nothing was written or connected; the secrets are rotated either way."
+    how: "Release isolation only on a rebuilt host, or on one the hunt clears."
+    body: "kill-process --pid <pid>"
+    attack: []

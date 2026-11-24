@@ -1,0 +1,1473 @@
+# Source of truth for this playbook's IR criteria.
+# Hand-edit freely. Re-run 'bun run build:index' after any change.
+playbook: "cloud-incident-response"
+title: "Cloud Incident Response"
+platforms:
+  - "AWS"
+  - "Azure"
+  - "GCP"
+scenarios:
+  - id: "1"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Leaked Access Key or Service Credential"
+    indicators: "a key found in a public repository, image or paste; a provider notice about an exposed key; API calls from an IP or user agent the owner never uses."
+    discriminator: "Assume it was used — public keys are harvested by scanners within minutes; aws iam get-access-key-last-used says when and from which service even before the trail is queried. For keys exposed on GitHub, AWS typically attaches its AWSCompromisedKeyQuarantineV3 managed policy within seconds, opens a support case and raises an AWS Health event of type AWS_RISK_CREDENTIALS_EXPOSED. Leave that policy in place — AWS says not to remove it — but it only denies a set of high-risk actions: it does not revoke the key, so deactivate it and deny the user anyway. GCP disables a leaked service-account key itself when the organisation policy iam.serviceAccountKeyExposureResponse is DISABLE_KEY (the default since June 2024) and writes an audit-log event plus an email to the project owners and security contacts; under WAIT_FOR_ABUSE it only notifies — check which one you run. Then run the full persistence hunt for everything the key could have created, and remove the key from the repository's history — deleting the file leaves it in every clone."
+    attack: []
+  - id: "2"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Cryptomining / Resource Abuse"
+    indicators: "a cost anomaly alert, GPU or large instances in regions you don't use, service-quota increase requests you didn't make, GuardDuty or Defender crypto-currency findings, a subscription or project on your billing account that nobody created."
+    discriminator: "It looks like a billing problem and it is an access problem: the miner is only the visible part. Check every region and every shape — fleets, SageMaker, ECS/EKS, scale sets, AKS, ML compute, GKE, Dataproc — and since 2024 the model-access variant: Bedrock entitlements, Azure OpenAI deployments and Vertex AI jobs resold as LLM access. Look where the bill hides: an attacker with billing rights creates their own account, subscription ( Microsoft.Subscription/aliases/write ) or project ( UpdateProjectBillingInfo seen with --billing-account ) and runs the miners there, outside every folder you watch. Snapshot one instance for evidence, then stop the rest — cost is the harm here. The credential that launched them still gets the full hunt; miners are often not the only thing a stolen key was used for. Open the billing case with the provider early."
+    attack: []
+  - id: "3"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Data Exposed or Taken from Storage"
+    indicators: "a bucket or container made public ( allUsers, a removed public-access block), a snapshot or image shared with an unknown account, storage keys listed, a disk SAS from beginGetAccess, an extortion email with sample files."
+    discriminator: "Close the exposure first, then work out what could be read. Azure SAS tokens signed with an account key can't be revoked one by one — rotating both account keys is the only way to kill them; user-delegation SAS die when the delegation keys are revoked. Remove external snapshot permissions and look at whether the other account already copied them. If object-level logging was off (S3 data events, StorageBlobLogs, GCP Data Access), notification is scoped on what was reachable, not what was proven read — and the status line says which."
+    attack: []
+  - id: "4"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Storage Held Hostage or Destroyed"
+    indicators: "mass object deletion, objects rewritten with a customer-provided key (SSE-C), a new lifecycle or replication rule, snapshots and backups deleted, a key scheduled for deletion, a ransom note object in a bucket."
+    discriminator: "With SSE-C the provider never holds the key — there is nothing to recover it from, so recovery comes from object versions, Object Lock, or backups the attacker couldn't reach. The quiet versions are deletion by rule and deletion by key: a lifecycle rule that expires everything (remove the rule — objects already expired are only recoverable if versioning kept noncurrent versions), a replication rule to the attacker's bucket, and a KMS key scheduled for deletion, which makes every object it wrapped unreadable when the 7–30 day window ends — aws kms cancel-key-deletion while it is pending. Azure: Recovery Services soft delete keeps deleted backup data 14 days and a Resource Guard makes turning it off a multi-user operation; Key Vault purge protection stops a purge inside the 7–90 day soft-delete window. GCP: soft delete keeps deleted objects 7 days by default ( gcloud storage ls --soft-deleted, gcloud storage restore ) and a Cloud KMS version in DESTROY_SCHEDULED can be restored for at least 24 hours. Stop the principal before protecting the backups; then follow Ransomware Response, Scenario 6 for the extortion and board decisions."
+    attack: []
+  - id: "5"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Compromised Workload"
+    indicators: "an instance or container running unexpected processes, SSRF against the metadata service, GuardDuty InstanceCredentialExfiltration findings (the instance role's credentials used from outside AWS)."
+    discriminator: "Two containments, not one. The host: memory first, through SSM, az vm run-command or gcloud compute ssh while the agent channel still works, then snapshot, then isolate — and keep it running. The identity: the role's credentials may already be in use from elsewhere, so revoke the role's sessions and hunt what it did, even after the host is isolated. Flow logs are the only record of what left the host. Enforce IMDSv2 before anything is redeployed."
+    attack: []
+  - id: "6"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Compromised CI/CD or Deployment Identity"
+    indicators: "infrastructure changed outside a merged change, a pipeline role used from an unknown runner, an OIDC trust policy that accepts any repository or branch, a workflow on pull_request_target that runs fork code with secrets."
+    discriminator: "Where humans are read-only, the pipeline identity is the most privileged principal you have — treat it like a domain admin. Pause the pipelines, revoke the role's sessions, and narrow the trust before re-enabling: on AWS the OIDC condition on token.actions.githubusercontent.com:sub must name the exact repository and branch or environment and:aud must be sts.amazonaws.com; on GCP the workload identity pool provider needs an attribute condition such as attribute.repository == \"org/repo\"; on Entra a federated credential's subject and issuer are the trust, and its addition is logged only as Update application with FederatedIdentityCredentials in the modified properties. Treat the Terraform or Pulumi state as a secret store that was read: it holds database passwords, keys and tokens in plain text, so rotate everything in it, not only the pipeline's own credential. Then diff deployed state against the code: anything the attacker deployed through the pipeline looks like a legitimate change."
+    attack: []
+  - id: "7"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Root, Management Account or Tenant Admin Compromised"
+    indicators: "root user sign-in or AssumeRoot, root email, billing contact, alternate contact or payment method changed, MFA devices changed, accounts closed or leaving the organisation, SCPs detached, Global Administrator activity nobody owns, an elevateAccess entry, a partner or delegation nobody set up."
+    discriminator: "This is the one incident where your own guardrails don't help: SCPs never apply to the management account, and a Global Admin can remove every other control. AWS: there is no session revoke for root — replace the password and MFA, then watch for userIdentity.type = 'Root' after that time. With centralised root access enabled, the management account recovers a member account's root without its password ( aws sts assume-root with the IAMDeleteRootUserCredentials task policy). Hunt the account itself: StartPrimaryEmailUpdate / AcceptPrimaryEmailUpdate, PutContactInformation and PutAlternateContact on account.amazonaws.com, SetAccountPreferences and SetAdditionalContacts on billingconsole.amazonaws.com, payment instruments on payments.amazonaws.com, and in the organisation CloseAccount, LeaveOrganization, RemoveAccountFromOrganization, DetachPolicy and DisablePolicyType. The attacker's other route is a support case: a convincing “lost MFA” account-recovery request to the provider — keep the alternate security contact current and tell Support the account is under incident response so recovery requests are challenged. Azure: an elevateAccess entry (Entra AuditLogs, service “Azure RBAC (Elevated Access)”) makes a Global Admin owner of every subscription; check it, then the delegations that reach your tenant from outside — GDAP and CSP relationships ( Get-MgTenantRelationshipDelegatedAdminRelationship ) and Lighthouse ( az managedservices assignment list ). Use the break-glass accounts, which are excluded from Conditional Access and monitored, not the compromised admin. For Entra ID admin compromise, follow Identity Breach Response in parallel. GCP: the organisation administrator and billing-account roles are the equivalent; search-all-iam-policies at organisation scope for roles/resourcemanager.organizationAdmin and roles/billing.admin says who holds them now."
+    attack: []
+criteria:
+  - id: "cloud-incident-response/aws/s1-everything-one-access-key-did-from-where-with-wh"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "AWS"
+    title: "Everything one access key did, from where, with which client"
+    why: "the key is the thread to pull. The first call from an IP or user agent the owner never uses is the attacker's first use; everything after it from that pair is in scope."
+    how: "No trail at all? aws iam get-access-key-last-used --access-key-id <AKIA...> still gives the last service, region and time. A key AWS found in public is also announced as an AWS Health event AWS_RISK_CREDENTIALS_EXPOSED and a quarantine policy on the user."
+    fp: "the owner's CI runners, NAT gateways and office egress produce stable (IP, user agent) pairs; compare the incident window against the key's previous 90 days before calling a pair the attacker's. A user agent of aws-cli on a key that only ever showed an SDK string is the usual tell."
+    query: |-
+      -- first and last use per source: which (IP, user agent) pairs are the owner, which are the attacker
+      SELECT sourceipaddress, useragent, min(eventtime) AS first_seen, max(eventtime) AS last_seen,
+             count(*) AS calls, count_if(errorcode IS NOT NULL) AS errors,
+             array_join(array_agg(DISTINCT eventsource), ',') AS services
+      FROM cloudtrail_logs
+      WHERE useridentity.accesskeyid = '<AKIA...>'
+        AND eventtime > '<window-start ISO8601>'
+      GROUP BY 1, 2 ORDER BY first_seen;
+
+      -- then the full timeline for the attacker's pairs
+      SELECT eventtime, awsregion, eventsource, eventname, sourceipaddress, useragent, errorcode, requestparameters
+      FROM cloudtrail_logs
+      WHERE useridentity.accesskeyid = '<AKIA...>' AND sourceipaddress IN ('<attacker-ip>')
+      ORDER BY eventtime;
+
+      # no Athena: one region, 90 days, IP and UA pulled out of the CloudTrailEvent string
+      aws cloudtrail lookup-events --region <region> --start-time <window-start> \
+        --lookup-attributes AttributeKey=AccessKeyId,AttributeValue=<AKIA...> --output json \
+        | jq -r '.Events[].CloudTrailEvent | fromjson
+                 | [.eventTime, .awsRegion, .eventSource, .eventName, .sourceIPAddress, .userAgent, (.errorCode // "")] | @tsv'
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "cloud-incident-response/aws/s2-enumeration-bursts-and-permission-probing"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Discovery"
+    stage_ord: 2
+    platform: "AWS"
+    title: "Enumeration bursts and permission probing"
+    why: "an attacker's first minutes are GetCallerIdentity, ListBuckets, GetAccountAuthorizationDetails, ListSecrets and a spray of Describe/List calls, many of them denied. A principal that touches forty distinct read APIs in an hour, or collects twenty AccessDenied s, is enumerating. GetCallerIdentity is never denied and never needs a permission, so it is the one call every stolen key makes."
+    how: null
+    fp: "Prowler, ScoutSuite, Steampipe, AWS Config, Security Hub and the SIEM collector role do exactly this on a schedule; exclude them by useridentity.arn and keep the thresholds above their usual counts. A human on a new laptop running aws configure and clicking through the console also trips the forty-call line once."
+    query: |-
+      SELECT useridentity.arn AS principal, sourceipaddress, useragent,
+             date_trunc('hour', from_iso8601_timestamp(eventtime)) AS hour,
+             count(DISTINCT eventname) AS distinct_calls,
+             count_if(errorcode = 'AccessDenied') AS denied,
+             count_if(eventname IN ('GetCallerIdentity','ListBuckets','GetAccountAuthorizationDetails','ListSecrets',
+                                    'ListUsers','ListRoles','ListAccessKeys','GetAccountSummary','DescribeRegions')) AS hallmark_calls,
+             array_join(array_agg(DISTINCT eventsource), ',') AS services
+      FROM cloudtrail_logs
+      WHERE eventtime > '<window-start ISO8601>' AND readonly = 'true'
+      GROUP BY 1, 2, 3, 4
+      HAVING count(DISTINCT eventname) > 40 OR count_if(errorcode = 'AccessDenied') > 20
+      ORDER BY denied DESC, distinct_calls DESC;
+    tested: null
+    attack:
+      - "T1087.004"
+      - "T1580"
+      - "T1526"
+  - id: "cloud-incident-response/aws/s3-policies-boundaries-and-trust-changed-a-role-han"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Privilege escalation"
+    stage_ord: 3
+    platform: "AWS"
+    title: "Policies, boundaries and trust changed; a role handed to compute"
+    why: "AWS escalation is a policy version set as default, a policy attached, a permissions boundary removed, a trust policy widened, a login profile added to someone else's user, or iam:PassRole handing an admin role to an instance or function the attacker controls. Identity Center assignments are the same thing one level up."
+    how: "The before/after of a policy version: aws iam get-policy-version --policy-arn <arn> --version-id v<n> for the attacker's version and the previous one. The T0 dump from the Preserve step is the authoritative “before”."
+    fp: "landing-zone and Terraform pipelines write policies and assignments on every apply, and RunInstances with an instance profile is normal. Filter on useridentity.arn not being the deploy role, then read the policy document in requestparameters: \"Action\":\"*\", AdministratorAccess, or a trust principal in an account you don't own is the finding."
+    query: |-
+      SELECT eventtime, eventsource, eventname, useridentity.arn AS actor, sourceipaddress, requestparameters, errorcode
+      FROM cloudtrail_logs
+      WHERE eventtime > '<window-start ISO8601>' AND (
+            (eventsource = 'iam.amazonaws.com' AND eventname IN (
+               'CreatePolicyVersion','SetDefaultPolicyVersion','AttachUserPolicy','AttachRolePolicy','AttachGroupPolicy',
+               'PutUserPolicy','PutRolePolicy','PutGroupPolicy','AddUserToGroup','UpdateAssumeRolePolicy',
+               'PutUserPermissionsBoundary','DeleteUserPermissionsBoundary','PutRolePermissionsBoundary','DeleteRolePermissionsBoundary',
+               'CreateLoginProfile','UpdateLoginProfile'))
+         OR (eventsource = 'sso.amazonaws.com' AND eventname IN (
+               'CreateAccountAssignment','CreatePermissionSet','AttachManagedPolicyToPermissionSet',
+               'PutInlinePolicyToPermissionSet','AttachCustomerManagedPolicyReferenceToPermissionSet'))
+         -- iam:PassRole: a privileged role attached to compute at launch
+         OR (eventname IN ('RunInstances','CreateFunction20150331','CreateStack','CreateAutoScalingGroup','RegisterTaskDefinition')
+             AND regexp_like(requestparameters, 'iamInstanceProfile|"role"|roleArn|RoleARN')))
+      ORDER BY eventtime;
+    tested: null
+    attack:
+      - "T1098.003"
+      - "T1548.005"
+  - id: "cloud-incident-response/aws/s4-users-keys-mfa-identity-providers-functions-rule"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Persistence"
+    stage_ord: 4
+    platform: "AWS"
+    title: "Users, keys, MFA, identity providers, functions, rules, SSM, Roles Anywhere"
+    why: "IAM is global and lands in us-east-1; the rest is per region. Persistence is not only a new user: a deactivated MFA device, a weakened password policy, an OIDC provider you did not create, a Lambda whose code was swapped, an EventBridge rule that invokes it, an SSM association that runs a command on every instance, or a Roles Anywhere trust anchor that turns the attacker's own CA into AWS credentials."
+    how: "Lambda event names carry an API-version suffix ( CreateFunction20150331, UpdateFunctionCode…, AddPermission20150331v2 ), hence the LIKE. For every hit, the T0 dump answers whether the object existed before the incident."
+    fp: "CloudFormation, Terraform and Serverless deploys create roles, functions, rules and associations all day, usually with useridentity.invokedby set or from a known deploy role; exclude those first. What is left that was made by a human, an access key, or a role the attacker held is the finding; so is any MFA deactivation or password-policy change at all."
+    query: |-
+      SELECT eventtime, awsregion, eventsource, eventname, useridentity.arn AS actor, sourceipaddress, requestparameters
+      FROM cloudtrail_logs
+      WHERE eventtime > '<window-start ISO8601>' AND errorcode IS NULL AND (
+            (eventsource = 'iam.amazonaws.com' AND eventname IN (
+               'CreateUser','CreateAccessKey','CreateLoginProfile','UpdateLoginProfile','CreateRole','UpdateAssumeRolePolicy',
+               'CreateSAMLProvider','UpdateSAMLProvider','CreateOpenIDConnectProvider','AddClientIDToOpenIDConnectProvider',
+               'UpdateOpenIDConnectProviderThumbprint','CreateVirtualMFADevice','EnableMFADevice','DeactivateMFADevice',
+               'DeleteVirtualMFADevice','UpdateAccountPasswordPolicy','DeleteAccountPasswordPolicy',
+               'CreateServiceSpecificCredential','UploadSSHPublicKey','UploadSigningCertificate'))
+         OR (eventsource = 'lambda.amazonaws.com' AND (eventname LIKE 'CreateFunction%' OR eventname LIKE 'UpdateFunctionCode%'
+               OR eventname LIKE 'UpdateFunctionConfiguration%' OR eventname LIKE 'AddPermission%' OR eventname LIKE 'CreateEventSourceMapping%'
+               OR eventname = 'CreateFunctionUrlConfig'))
+         OR (eventsource = 'events.amazonaws.com' AND eventname IN ('PutRule','PutTargets'))
+         OR (eventsource = 'ssm.amazonaws.com' AND eventname IN ('CreateAssociation','UpdateAssociation','SendCommand','StartSession','CreateDocument','UpdateDocument'))
+         OR (eventsource = 'rolesanywhere.amazonaws.com' AND eventname IN ('CreateTrustAnchor','UpdateTrustAnchor','CreateProfile','UpdateProfile'))
+         OR (eventsource = 'sso.amazonaws.com' AND eventname IN ('CreateAccountAssignment','CreatePermissionSet','CreateInstance'))
+         OR (eventsource = 'ec2.amazonaws.com' AND eventname IN ('ModifyInstanceAttribute','CreateLaunchTemplateVersion') AND requestparameters LIKE '%userData%'))
+      ORDER BY eventtime;
+    tested: null
+    attack:
+      - "T1098.001"
+      - "T1136.003"
+      - "T1556.006"
+  - id: "cloud-incident-response/aws/s5-logging-and-detection-switched-off-narrowed-or-s"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Defence evasion"
+    stage_ord: 5
+    platform: "AWS"
+    title: "Logging and detection switched off, narrowed or starved"
+    why: "the time of the first hit is where your visibility ends and the scoping gap begins. The loud version is StopLogging or DeleteDetector; the quiet ones are UpdateTrail dropping multi-region or global events, PutEventSelectors removing data events, a GuardDuty filter that archives findings, an IP set that trusts the attacker's address, a lifecycle rule or policy change on the trail bucket, and DeleteEventDataStore on CloudTrail Lake."
+    how: null
+    fp: "the central security account's automation legitimately calls UpdateDetector, UpdateFilter and UpdateTrail; a log-pipeline change ticket explains PutRetentionPolicy and trail-bucket lifecycle edits. Match each hit to a ticket; anything from the compromised principal, or without one, is the finding."
+    query: |-
+      SELECT eventtime, awsregion, eventsource, eventname, useridentity.arn AS actor, sourceipaddress, requestparameters
+      FROM cloudtrail_logs
+      WHERE eventtime > '<window-start ISO8601>' AND errorcode IS NULL AND (
+            (eventsource = 'cloudtrail.amazonaws.com' AND eventname IN (
+               'StopLogging','DeleteTrail','UpdateTrail','PutEventSelectors','PutInsightSelectors',
+               'DeleteEventDataStore','UpdateEventDataStore','StopEventDataStoreIngestion'))
+         OR (eventsource = 'guardduty.amazonaws.com' AND eventname IN (
+               'DeleteDetector','UpdateDetector','CreateFilter','UpdateFilter','CreateIPSet','UpdateIPSet',
+               'CreateThreatIntelSet','UpdateThreatIntelSet','DeleteMembers','DisassociateFromAdministratorAccount',
+               'DeletePublishingDestination','UpdateMalwareScanSettings'))
+         OR (eventsource = 'config.amazonaws.com' AND eventname IN ('StopConfigurationRecorder','DeleteConfigurationRecorder','DeleteDeliveryChannel','DeleteConfigRule'))
+         OR (eventsource = 'securityhub.amazonaws.com' AND eventname IN ('DisableSecurityHub','BatchDisableStandards','DisableImportFindingsForProduct'))
+         OR (eventsource = 'ec2.amazonaws.com' AND eventname = 'DeleteFlowLogs')
+         OR (eventsource = 'macie2.amazonaws.com' AND eventname = 'DisableMacie')
+         OR (eventsource = 'detective.amazonaws.com' AND eventname = 'DeleteGraph')
+         OR (eventsource = 'logs.amazonaws.com' AND eventname IN ('DeleteLogGroup','PutRetentionPolicy','DeleteSubscriptionFilter','DeleteResourcePolicy'))
+         OR (eventsource = 's3.amazonaws.com'
+             AND eventname IN ('PutBucketLifecycle','PutBucketPolicy','DeleteBucketPolicy','PutBucketVersioning','DeleteBucket','PutBucketAcl')
+             AND json_extract_scalar(requestparameters, '$.bucketName') IN ('<trail-bucket>', '<flow-log-bucket>')))
+      ORDER BY eventtime;
+    tested: null
+    attack:
+      - "T1685.002"
+      - "T1685"
+  - id: "cloud-incident-response/aws/s5-guardduty-findings-you-haven-t-read-log-file-int"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Defence evasion"
+    stage_ord: 5
+    platform: "AWS"
+    title: "GuardDuty findings you haven't read, log-file integrity, Insights"
+    why: "GuardDuty writes the evasion findings for you if it was running; validate-logs proves the trail files in S3 were not altered or deleted after delivery (needs log-file validation on the trail); CloudTrail Insights, if enabled, has already flagged the API-rate spike that the attacker's enumeration or mass-delete produced."
+    how: null
+    fp: "GuardDuty's AnomalousBehavior families fire on new admins and new automation; read the finding's “unusual” section before treating it as the attacker. A validate-logs gap that lines up with a bucket lifecycle rule is retention, not tampering."
+    query: |-
+      aws guardduty list-findings --region <region> --detector-id <detector-id> --finding-criteria '{"Criterion":{"type":{"Eq":[
+        "Stealth:IAMUser/CloudTrailLoggingDisabled","Stealth:IAMUser/PasswordPolicyChange","Policy:IAMUser/RootCredentialUsage",
+        "UnauthorizedAccess:IAMUser/TorIPCaller","UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS",
+        "Discovery:IAMUser/AnomalousBehavior","Persistence:IAMUser/AnomalousBehavior","Exfiltration:IAMUser/AnomalousBehavior",
+        "CredentialAccess:IAMUser/AnomalousBehavior","DefenseEvasion:IAMUser/AnomalousBehavior"]}}}' \
+        | jq -r '.FindingIds[]' | xargs -r aws guardduty get-findings --region <region> --detector-id <detector-id> --finding-ids \
+        | jq -r '.Findings[] | [.UpdatedAt, .Type, .Severity, .Resource.AccessKeyDetails.UserName // "", .Title] | @tsv'
+
+      # were the delivered log files tampered with after the fact?
+      aws cloudtrail validate-logs --region <trail-home-region> --trail-arn <org-trail-arn> --start-time <window-start>
+
+      # Insights (only if PutInsightSelectors was ever applied to the trail)
+      aws cloudtrail lookup-events --region <region> --event-category insight --start-time <window-start> \
+        --query 'Events[].[EventTime,EventName,Resources[0].ResourceName]' --output table
+    tested: null
+    attack:
+      - "T1685.002"
+  - id: "cloud-incident-response/aws/s6-role-chains-and-cross-account-assumption"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Lateral movement"
+    stage_ord: 6
+    platform: "AWS"
+    title: "Role chains and cross-account assumption"
+    why: "cloud lateral movement is AssumeRole. A session assuming another role is a chain; a target account that differs from the caller's account is a hop into another account. useridentity.sessioncontext.sessionissuer.arn names the role the caller already held, requestparameters.roleArn the one it took, and sharedeventid ties the caller-side record to the record in the target account on the organisation trail."
+    how: "Console role switches are SwitchRole under signin.amazonaws.com. The same principal or IP in a partner's or customer's trail is the next question — ask them."
+    fp: "every workload assumes roles constantly and pipelines chain them by design. Exclude the known pipeline and instance roles, then compare each (caller_role, target_role) pair against the previous 30 days: a pair that never occurred before, a target in an account you don't own, or AssumeRoot at all, is the finding."
+    query: |-
+      SELECT eventtime, useridentity.type AS caller_type, useridentity.arn AS caller,
+             useridentity.sessioncontext.sessionissuer.arn AS caller_role,
+             json_extract_scalar(requestparameters, '$.roleArn') AS target_role,
+             json_extract_scalar(requestparameters, '$.roleSessionName') AS session_name,
+             useridentity.accountid AS from_account, recipientaccountid AS to_account,
+             sharedeventid, sourceipaddress, useragent, errorcode
+      FROM cloudtrail_logs
+      WHERE eventsource = 'sts.amazonaws.com'
+        AND eventname IN ('AssumeRole','AssumeRoleWithSAML','AssumeRoleWithWebIdentity','GetFederationToken','AssumeRoot')
+        AND eventtime > '<window-start ISO8601>'
+        AND useridentity.invokedby IS NULL                      -- drop AWS services assuming roles on your behalf
+        AND (useridentity.accountid <> recipientaccountid        -- cross-account hop
+             OR useridentity.type = 'AssumedRole')               -- role assuming a role: a chain
+      ORDER BY eventtime;
+    tested: null
+    attack:
+      - "T1550.001"
+      - "T1021.007"
+  - id: "cloud-incident-response/aws/s7-compute-fleets-gpus-model-access-and-quota-incre"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Resource abuse"
+    stage_ord: 7
+    platform: "AWS"
+    title: "Compute, fleets, GPUs, model access and quota increases in every region"
+    why: "miners launch where you don't look and in the shapes you don't watch: spot fleets, SageMaker notebooks and training jobs, ECS tasks, EKS node groups, Lightsail, Batch. A RequestServiceQuotaIncrease for GPU families is the attacker preparing. Since 2024 the same stolen key is used to enable and invoke Bedrock models and resell the access."
+    how: "What is live right now: loop aws ec2 describe-instances --region $r --filters Name=instance-state-name,Values=running --query 'Reservations[].Instances[].[InstanceId,InstanceType,LaunchTime]' over describe-regions. Bedrock InvokeModel is a data event; the entitlement calls below are management events."
+    fp: "Auto Scaling, spot fleet and Batch launch instances on your behalf with useridentity.invokedby set, which the query already drops. CI runners and data-science teams launch GPU instances legitimately; a launch in a region you never use, a p / g family you never ordered, or InstanceLimitExceeded errors followed by a quota request is the finding. Cost Explorer by region and service for the same window confirms it."
+    query: |-
+      SELECT eventtime, awsregion, eventsource, eventname, useridentity.arn AS actor, sourceipaddress,
+             json_extract_scalar(requestparameters, '$.instanceType') AS instance_type, errorcode
+      FROM cloudtrail_logs
+      WHERE eventtime > '<window-start ISO8601>' AND useridentity.invokedby IS NULL AND (
+            (eventsource = 'ec2.amazonaws.com' AND eventname IN ('RunInstances','CreateFleet','RequestSpotFleet','RequestSpotInstances','CreateLaunchTemplate'))
+         OR (eventsource = 'sagemaker.amazonaws.com' AND eventname IN ('CreateNotebookInstance','CreateTrainingJob','CreateProcessingJob','CreateEndpoint'))
+         OR (eventsource = 'ecs.amazonaws.com' AND eventname IN ('RunTask','CreateService','RegisterTaskDefinition'))
+         OR (eventsource = 'eks.amazonaws.com' AND eventname IN ('CreateCluster','CreateNodegroup','CreateFargateProfile'))
+         OR (eventsource = 'lightsail.amazonaws.com' AND eventname IN ('CreateInstances','CreateContainerService'))
+         OR (eventsource = 'batch.amazonaws.com' AND eventname IN ('CreateComputeEnvironment','SubmitJob'))
+         OR (eventsource = 'servicequotas.amazonaws.com' AND eventname = 'RequestServiceQuotaIncrease')
+         OR (eventsource = 'bedrock.amazonaws.com' AND eventname IN ('PutFoundationModelEntitlement','PutUseCaseForModelAccess','CreateModelInvocationJob','InvokeModel')))
+      ORDER BY eventtime;
+    tested: null
+    attack:
+      - "T1496.001"
+      - "T1496.004"
+  - id: "cloud-incident-response/aws/s8-storage-opened-snapshots-shared-secrets-read-dis"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Data access"
+    stage_ord: 8
+    platform: "AWS"
+    title: "Storage opened, snapshots shared, secrets read, disks exported"
+    why: "sharing a snapshot or AMI with an outside account copies a whole disk out without a single data-plane read; a public bucket policy or a removed public-access block does the same for objects; GetSecretValue and a decrypted GetParameter are management events, so the secret reads are visible even without data events."
+    how: null
+    fp: "workloads call GetSecretValue on every start and AWS Backup copies snapshots on a schedule ( invokedby backup.amazonaws.com ). Group by actor: a human, an access key, or a role the attacker held reading secrets it never read before, or a snapshot shared to an account not in your organisation, is the finding."
+    query: |-
+      SELECT eventtime, awsregion, eventsource, eventname, useridentity.arn AS actor, sourceipaddress, requestparameters
+      FROM cloudtrail_logs
+      WHERE eventtime > '<window-start ISO8601>' AND errorcode IS NULL AND (
+            (eventsource = 's3.amazonaws.com' AND (eventname IN ('PutBucketPolicy','PutBucketAcl','PutAccessPointPolicy','PutBucketCors')
+                                                   OR eventname LIKE '%PublicAccessBlock%'))
+         OR (eventsource = 'ec2.amazonaws.com' AND eventname IN ('ModifySnapshotAttribute','ModifyImageAttribute','CopySnapshot','CreateSnapshot','CreateSnapshots','CreateImage'))
+         OR (eventsource = 'rds.amazonaws.com' AND eventname IN ('ModifyDBSnapshotAttribute','ModifyDBClusterSnapshotAttribute','CopyDBSnapshot','CreateDBSnapshot','StartExportTask'))
+         OR (eventsource = 'secretsmanager.amazonaws.com' AND eventname IN ('GetSecretValue','BatchGetSecretValue','ListSecrets','PutResourcePolicy'))
+         OR (eventsource = 'ssm.amazonaws.com' AND eventname IN ('GetParameter','GetParameters','GetParametersByPath') AND requestparameters LIKE '%"withDecryption":true%')
+         OR (eventsource = 'kms.amazonaws.com' AND eventname IN ('PutKeyPolicy','CreateGrant','ReplicateKey'))
+         OR (eventsource = 'dynamodb.amazonaws.com' AND eventname = 'ExportTableToPointInTime')
+         OR (eventsource = 'sts.amazonaws.com' AND eventname = 'GetFederationToken'))
+      ORDER BY eventtime;
+    tested: null
+    attack:
+      - "T1530"
+      - "T1537"
+      - "T1555.006"
+  - id: "cloud-incident-response/aws/s8-what-was-read-object-level-s3-data-events"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Data access"
+    stage_ord: 8
+    platform: "AWS"
+    title: "What was read — object-level S3 data events"
+    why: "the only record of an object read is an S3 data event, and the trail only has them if its event selectors included S3 objects before the incident. If they were off, write that down — “no evidence of exfiltration” and “no logs that could show exfiltration” are different statements — and scope on what the principal could read. GuardDuty S3 Protection ( Exfiltration:S3/AnomalousBehavior ) and bucket server-access logs are the only other sources."
+    how: null
+    fp: "replication, backup, CDN origin fetches and analytics jobs read entire buckets; exclude the replication and backup roles and anything with invokedby. Order by bytes, not by count: a ListObjects storm is reconnaissance, a GetObject sweep with the bytes to match is exfiltration."
+    query: |-
+      -- requires S3 data events on the trail (eventCategory = Data); bytesTransferredOut is in additionaleventdata
+      SELECT useridentity.arn AS actor, sourceipaddress, useragent,
+             json_extract_scalar(requestparameters, '$.bucketName') AS bucket,
+             count(*) AS reads,
+             sum(cast(json_extract_scalar(additionaleventdata, '$.bytesTransferredOut') AS bigint)) AS bytes_out,
+             min(eventtime) AS first_read, max(eventtime) AS last_read
+      FROM cloudtrail_logs
+      WHERE eventsource = 's3.amazonaws.com'
+        AND eventname IN ('GetObject','HeadObject','ListObjects','ListObjectsV2','CopyObject','SelectObjectContent','GetObjectTorrent')
+        AND eventtime > '<window-start ISO8601>'
+        AND (useridentity.accesskeyid = '<AKIA... or ASIA...>' OR sourceipaddress IN ('<attacker-ip>'))
+      GROUP BY 1, 2, 3, 4
+      ORDER BY bytes_out DESC;
+    tested: null
+    attack:
+      - "T1530"
+  - id: "cloud-incident-response/aws/s8-bytes-out-of-a-compromised-instance-vpc-flow-log"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Data access"
+    stage_ord: 8
+    platform: "AWS"
+    title: "Bytes out of a compromised instance — VPC flow logs"
+    why: "for a workload foothold the control plane does not show the exfiltration or the C2; the ENI's flow logs do, as 5-tuples with byte counts. They are off by default and the default format has no direction flag, so read from the instance's point of view. GuardDuty reads flow logs independently of whether you enabled them, so its Backdoor:EC2/C&CActivity.B, CryptoCurrency:EC2/BitcoinTool.B and Trojan:EC2/DNSDataExfiltration findings exist even when your own flow logs don't."
+    how: null
+    fp: "backups and artefact uploads to S3 through a gateway endpoint, package mirrors and the SSM/CloudWatch agents dominate bytes. Drop the S3 and DynamoDB prefix-list ranges ( aws ec2 describe-prefix-lists ) and your known egress first; what is left on 443 to an address with no DNS history, or anything on 4444, 8333 or 3333, is the finding."
+    query: |-
+      -- table from the VPC flow logs Athena DDL (default v2 fields); "end" is reserved, hence the quotes
+      SELECT dstaddr, dstport, protocol, sum(bytes) AS bytes, count(*) AS flows,
+             from_unixtime(min(start)) AS first_seen, from_unixtime(max("end")) AS last_seen
+      FROM vpc_flow_logs
+      WHERE interface_id = '<eni-of-compromised-instance>' AND action = 'ACCEPT'
+        AND start > to_unixtime(timestamp '<window-start, e.g. 2026-09-20 00:00:00>')
+      GROUP BY 1, 2, 3
+      ORDER BY bytes DESC
+      LIMIT 50;
+    tested: null
+    attack:
+      - "T1041"
+      - "T1048"
+  - id: "cloud-incident-response/aws/s9-deletion-re-encryption-lifecycle-wipes-backup-an"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Impact"
+    stage_ord: 9
+    platform: "AWS"
+    title: "Deletion, re-encryption, lifecycle wipes, backup and key destruction"
+    why: "cloud ransomware is a bucket lifecycle rule that expires everything tomorrow, a replication rule to the attacker's bucket, objects copied over themselves with a customer-provided key (SSE-C — AWS never holds the key, SSEApplied = SSE_C in the data event), a KMS key scheduled for deletion (7–30 day window, nothing readable after), snapshots and recovery points deleted, and CloseAccount or LeaveOrganization to take the account out of your reach."
+    how: "A DeleteObject whose requestparameters carries a versionId is a permanent delete of that version, not a delete marker. DeleteObjects and SSE-C writes are data events."
+    fp: "lifecycle expirations and your own cleanup jobs delete objects in bulk, and snapshot lifecycle policies delete snapshots daily under invokedby. Compare each actor's delete count per hour with its previous 30 days; any SSE-C at all in an estate that never uses it, any ScheduleKeyDeletion, and any backup-vault change outside a ticket is the finding."
+    query: |-
+      SELECT eventtime, awsregion, eventsource, eventname, useridentity.arn AS actor, sourceipaddress,
+             json_extract_scalar(additionaleventdata, '$.SSEApplied') AS sse, requestparameters
+      FROM cloudtrail_logs
+      WHERE eventtime > '<window-start ISO8601>' AND errorcode IS NULL AND (
+            (eventsource = 's3.amazonaws.com' AND eventname IN ('DeleteBucket','PutBucketLifecycle','PutBucketReplication','DeleteBucketReplication',
+                                                                'PutBucketVersioning','PutBucketEncryption','PutObjectLockConfiguration'))
+         OR (eventsource = 's3.amazonaws.com' AND eventname IN ('DeleteObjects','DeleteObject','PutObject','CopyObject')     -- data events
+             AND (json_extract_scalar(additionaleventdata, '$.SSEApplied') = 'SSE_C' OR eventname LIKE 'Delete%'))
+         OR (eventsource = 'ec2.amazonaws.com' AND eventname IN ('DeleteSnapshot','DeregisterImage','DeleteVolume','TerminateInstances'))
+         OR (eventsource = 'rds.amazonaws.com' AND eventname IN ('DeleteDBSnapshot','DeleteDBClusterSnapshot','DeleteDBInstance','DeleteDBCluster'))
+         OR (eventsource = 'backup.amazonaws.com' AND eventname IN ('DeleteBackupVault','DeleteRecoveryPoint','DeleteBackupPlan','DeleteBackupSelection',
+                                                                    'PutBackupVaultAccessPolicy','DeleteBackupVaultLockConfiguration'))
+         OR (eventsource = 'kms.amazonaws.com' AND eventname IN ('ScheduleKeyDeletion','DisableKey','DeleteAlias','DeleteImportedKeyMaterial','PutKeyPolicy'))
+         OR (eventsource = 'dynamodb.amazonaws.com' AND eventname IN ('DeleteTable','DeleteBackup','UpdateContinuousBackups'))
+         OR (eventsource = 'glacier.amazonaws.com' AND eventname IN ('DeleteVault','DeleteArchive'))
+         OR (eventsource = 'organizations.amazonaws.com' AND eventname IN ('CloseAccount','LeaveOrganization','RemoveAccountFromOrganization')))
+      ORDER BY eventtime;
+    tested: null
+    attack:
+      - "T1485"
+      - "T1486"
+      - "T1490"
+  - id: "cloud-incident-response/azure/s1-users-service-principals-and-managed-identities"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "Azure"
+    title: "Users, service principals and managed identities signing in from new places"
+    why: "a leaked secret, a phished user or a replayed token shows up as the principal signing in from an IP it has never used. The union covers the four sign-in tables; the baseline is the 30 days before the window, so the table retention bounds how far back “never” reaches."
+    how: null
+    fp: "a new office or VPN egress, hosted DevOps agents (their IPs rotate), and workloads scaled into a new region all produce “new” IPs for legitimate principals. A baseline shorter than the attacker's dwell time makes the attacker “known”; if the tables only hold 7 days, say so in the status line."
+    query: |-
+      let window = 7d; let baseline = 30d;
+      let signins = union isfuzzy=true
+          (SigninLogs                        | extend Principal = UserPrincipalName,  Kind = "user"),
+          (AADNonInteractiveUserSignInLogs   | extend Principal = UserPrincipalName,  Kind = "user-noninteractive"),
+          (AADServicePrincipalSignInLogs     | extend Principal = ServicePrincipalName, Kind = "service-principal"),
+          (AADManagedIdentitySignInLogs      | extend Principal = ServicePrincipalName, Kind = "managed-identity")
+        | where TimeGenerated > ago(baseline)
+        | project TimeGenerated, Principal, Kind, IPAddress, ResultType, ResourceDisplayName;
+      let known = signins | where TimeGenerated between (ago(baseline) .. ago(window)) | distinct Principal, IPAddress;
+      signins
+      | where TimeGenerated > ago(window)
+      | join kind=leftanti known on Principal, IPAddress
+      | summarize FirstSeen = min(TimeGenerated), Calls = count(), Failures = countif(ResultType != "0"),
+                  Resources = make_set(ResourceDisplayName, 5) by Principal, Kind, IPAddress
+      | order by FirstSeen desc
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "cloud-incident-response/azure/s2-graph-and-arm-enumeration-azurehound-roadtools-a"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Discovery"
+    stage_ord: 2
+    platform: "Azure"
+    title: "Graph and ARM enumeration — AzureHound, ROADtools and friends"
+    why: "the Activity Log never records reads, so directory and resource enumeration only appear in MicrosoftGraphActivityLogs (needs the Entra diagnostic setting) and in the sign-in tables as a token for Graph or ARM with a scripting user agent. Two hundred GETs against users, groups, service principals and role assignments in an hour from one token is a collector."
+    how: "Graph activity logs off? Fall back to union SigninLogs, AADNonInteractiveUserSignInLogs | where ResourceDisplayName in (\"Microsoft Graph\", \"Windows Azure Service Management API\") | where UserAgent has_any (\"python\", \"azurehound\", \"roadtx\", \"go-http\") — you see the token being obtained, not what it fetched."
+    fp: "Microsoft Graph PowerShell in an admin's hands, Intune and Defender connectors, and your own scheduled BloodHound audit all paginate the directory. Exclude the audit app's AppId; the 200-call line is a starting point, not a verdict."
+    query: |-
+      MicrosoftGraphActivityLogs
+      | where TimeGenerated > ago(14d)
+      | where RequestMethod == "GET"
+      | where UserAgent has_any ("python-requests", "azurehound", "roadtx", "roadrecon", "AADInternals", "GraphRunner", "go-http-client")
+         or RequestUri has_any ("/directoryRoles", "/roleManagement/directory/roleAssignments", "/servicePrincipals",
+                                "/applications", "/users?$top=999", "/groups?$top=999", "/devices?$top=999")
+      | summarize Calls = count(), DistinctUris = dcount(RequestUri), Status = make_set(ResponseStatusCode, 5),
+                  First = min(TimeGenerated), Last = max(TimeGenerated)
+          by Who = coalesce(UserId, ServicePrincipalId), AppId, IPAddress, UserAgent
+      | where Calls > 200 or UserAgent has_any ("azurehound", "roadtx", "roadrecon", "AADInternals", "GraphRunner")
+      | order by Calls desc
+    tested: null
+    attack:
+      - "T1087.004"
+      - "T1526"
+      - "T1580"
+  - id: "cloud-incident-response/azure/s3-elevate-access-role-assignments-custom-roles-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Privilege escalation"
+    stage_ord: 3
+    platform: "Azure"
+    title: "Elevate access, role assignments, custom roles and PIM requests"
+    why: "a Global Administrator toggling Access management for Azure resources becomes User Access Administrator on every subscription in the tenant; it is logged in Entra AuditLogs under the service “Azure RBAC (Elevated Access)”, not in AzureActivity. Owner or User Access Administrator written to a new principal, a custom role definition with *, or a PIM eligibility request are the Azure-side versions."
+    how: "Current state, independent of log retention: az graph query -q \"authorizationresources | where type == 'microsoft.authorization/roleassignments' | extend p = properties | where todatetime(p.createdOn) > ago(30d) | project p.createdOn, p.principalId, p.principalType, p.roleDefinitionId, p.scope\". Owner is 8e3af657-a8ff-443c-a75c-2fe8c4bcb635, User Access Administrator 18d7d88d-d35e-4fb5-a5c3-7773c20a72d9."
+    fp: "PIM activations by on-call engineers and landing-zone pipelines writing assignments are routine; elevate access is not — it should only ever appear with a change ticket or a documented break-glass. Any assignment whose RoleDefinitionId ends in the Owner or User Access Administrator GUID at subscription or management-group scope is the finding until a ticket says otherwise."
+    query: |-
+      let elevate = AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where LoggedByService == "Azure RBAC (Elevated Access)" or OperationName has "elevated their access"
+      | project TimeGenerated, Source = "Entra", Operation = OperationName,
+                Who = tostring(InitiatedBy.user.userPrincipalName), IP = tostring(InitiatedBy.user.ipAddress), Detail = Result;
+      let rbac = AzureActivity
+      | where TimeGenerated > ago(30d)
+      | where ActivityStatusValue =~ "Success"
+      | where OperationNameValue in~ ("MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE", "MICROSOFT.AUTHORIZATION/ROLEDEFINITIONS/WRITE",
+                                     "MICROSOFT.AUTHORIZATION/ROLEELIGIBILITYSCHEDULEREQUESTS/WRITE",
+                                     "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTSCHEDULEREQUESTS/WRITE")
+      | extend body = parse_json(tostring(parse_json(Properties).requestbody))
+      | extend Detail = strcat(tostring(body.Properties.PrincipalType), " ", tostring(body.Properties.PrincipalId),
+                               " -> ", tostring(body.Properties.RoleDefinitionId), " @ ", tostring(body.Properties.Scope))
+      | project TimeGenerated, Source = "ARM", Operation = OperationNameValue, Who = Caller, IP = CallerIpAddress, Detail;
+      elevate | union rbac | order by TimeGenerated desc
+    tested: null
+    attack:
+      - "T1098.003"
+      - "T1548.005"
+  - id: "cloud-incident-response/azure/s4-credentials-federated-credentials-owners-roles-c"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Persistence"
+    stage_ord: 4
+    platform: "Azure"
+    title: "Credentials, federated credentials, owners, roles, CA policy; extensions, run commands, runbooks, functions, subscriptions"
+    why: "a new secret, certificate or federated credential on an existing app survives every password reset; a federated credential is logged as a plain Update application with FederatedIdentityCredentials in the modified properties, which is why naive filters miss it. On the Azure side the same goal is a CustomScript extension or run command on every VM, an Automation runbook on a schedule, a Logic App or function app, a federated credential on a user-assigned managed identity, or a new subscription created on your billing account."
+    how: "MICROSOFT.SUBSCRIPTION/ALIASES/WRITE is logged at tenant scope and only lands in a workspace if the tenant-level Activity Log is exported; the list of subscriptions in Resource Graph ( resourcecontainers | where type == 'microsoft.resources/subscriptions' ) is the reliable check."
+    fp: "Azure Policy remediation and Defender for Cloud write agent extensions to every VM, and deployment pipelines write function apps, Logic Apps and runbooks on each release. Filter on Caller being a human or the compromised principal, and on extension names CustomScript, CustomScriptExtension and RunCommand*; in Entra, exclude your identity-governance automation's app from the credential adds."
+    query: |-
+      let entra = AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where OperationName in ("Add service principal credentials", "Update application – Certificates and secrets management",
+                                "Add owner to application", "Add owner to service principal", "Add app role assignment to service principal",
+                                "Consent to application", "Add member to role", "Add eligible member to role",
+                                "Update conditional access policy", "Delete conditional access policy", "Add user",
+                                "User registered security info", "Add partner to company")
+         or (OperationName == "Update application" and tostring(TargetResources[0].modifiedProperties) has "FederatedIdentityCredentials")
+      | project TimeGenerated, Source = "Entra", Operation = OperationName,
+                Who = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName)),
+                IP = tostring(InitiatedBy.user.ipAddress), Target = tostring(TargetResources[0].displayName), Detail = Result;
+      let arm = AzureActivity
+      | where TimeGenerated > ago(30d)
+      | where ActivityStatusValue =~ "Success"
+      | where OperationNameValue in~ ("MICROSOFT.COMPUTE/VIRTUALMACHINES/EXTENSIONS/WRITE", "MICROSOFT.COMPUTE/VIRTUALMACHINES/RUNCOMMAND/ACTION",
+              "MICROSOFT.COMPUTE/VIRTUALMACHINES/RUNCOMMANDS/WRITE", "MICROSOFT.COMPUTE/VIRTUALMACHINESCALESETS/EXTENSIONS/WRITE",
+              "MICROSOFT.AUTOMATION/AUTOMATIONACCOUNTS/RUNBOOKS/WRITE", "MICROSOFT.AUTOMATION/AUTOMATIONACCOUNTS/RUNBOOKS/DRAFT/CONTENT/WRITE",
+              "MICROSOFT.AUTOMATION/AUTOMATIONACCOUNTS/JOBSCHEDULES/WRITE", "MICROSOFT.AUTOMATION/AUTOMATIONACCOUNTS/WEBHOOKS/WRITE",
+              "MICROSOFT.LOGIC/WORKFLOWS/WRITE", "MICROSOFT.WEB/SITES/WRITE", "MICROSOFT.WEB/SITES/CONFIG/WRITE",
+              "MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/WRITE",
+              "MICROSOFT.MANAGEDIDENTITY/USERASSIGNEDIDENTITIES/FEDERATEDIDENTITYCREDENTIALS/WRITE",
+              "MICROSOFT.KEYVAULT/VAULTS/ACCESSPOLICIES/WRITE", "MICROSOFT.SUBSCRIPTION/ALIASES/WRITE")
+      | project TimeGenerated, Source = "ARM", Operation = OperationNameValue, Who = Caller, IP = CallerIpAddress, Target = ResourceId, Detail = ActivityStatusValue;
+      entra | union arm | order by TimeGenerated desc
+    tested: null
+    attack:
+      - "T1098.001"
+      - "T1136.003"
+      - "T1098.003"
+  - id: "cloud-incident-response/azure/s5-diagnostic-settings-workspaces-defender-plans-se"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Defence evasion"
+    stage_ord: 5
+    platform: "Azure"
+    title: "Diagnostic settings, workspaces, Defender plans, Sentinel connectors, policy and locks removed"
+    why: "deleting the Activity Log export is quieter than any other way of going dark, and so is a retention cut on the workspace table, a Defender plan set to Free, a Sentinel data connector removed, a policy assignment or exemption, or a resource lock deleted so the next step can delete the resource. The Entra diagnostic setting lives at tenant scope and its deletion is only in the Directory Activity log (portal, or az rest against /providers/Microsoft.Insights/eventtypes/management/values ), not in AzureActivity."
+    how: null
+    fp: "landing-zone pipelines rewrite diagnostic settings (the WRITE rows) on every redeploy and the platform team changes table retention on purpose. A DELETE by a human caller, or anything from the compromised principal, outside a change ticket is the finding."
+    query: |-
+      AzureActivity
+      | where TimeGenerated > ago(30d)
+      | where ActivityStatusValue =~ "Success"
+      | where OperationNameValue in~ ("MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/DELETE", "MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/WRITE",
+              "MICROSOFT.OPERATIONALINSIGHTS/WORKSPACES/DELETE", "MICROSOFT.OPERATIONALINSIGHTS/WORKSPACES/DATAEXPORTS/DELETE",
+              "MICROSOFT.OPERATIONALINSIGHTS/WORKSPACES/TABLES/WRITE",
+              "MICROSOFT.SECURITY/PRICINGS/WRITE", "MICROSOFT.SECURITY/SETTINGS/WRITE", "MICROSOFT.SECURITY/AUTOMATIONS/DELETE",
+              "MICROSOFT.SECURITYINSIGHTS/DATACONNECTORS/DELETE", "MICROSOFT.SECURITYINSIGHTS/ALERTRULES/DELETE",
+              "MICROSOFT.AUTHORIZATION/POLICYASSIGNMENTS/DELETE", "MICROSOFT.AUTHORIZATION/POLICYEXEMPTIONS/WRITE",
+              "MICROSOFT.AUTHORIZATION/LOCKS/DELETE", "MICROSOFT.NETWORK/NETWORKWATCHERS/FLOWLOGS/DELETE",
+              "MICROSOFT.EVENTHUB/NAMESPACES/EVENTHUBS/DELETE")
+      | project TimeGenerated, OperationNameValue, Caller, CallerIpAddress, ResourceId, SubscriptionId
+      | order by TimeGenerated desc
+    tested: null
+    attack:
+      - "T1685.002"
+      - "T1685"
+  - id: "cloud-incident-response/azure/s5-defender-for-cloud-alerts-nobody-read"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Defence evasion"
+    stage_ord: 5
+    platform: "Azure"
+    title: "Defender for Cloud alerts nobody read"
+    why: "Defender for Cloud has usually already raised the suspicious sign-in, the MicroBurst or PowerZure toolkit, the unusual role assignment or the mass delete; the alert table is the fastest first pass over the whole window and tells you which detections the attacker triggered and which they slipped past."
+    how: null
+    fp: "Defender's informational and low alerts fire on routine admin work; read medium and high first, then anything naming the compromised principal regardless of severity."
+    query: |-
+      SecurityAlert
+      | where TimeGenerated > ago(14d)
+      | where ProductName in ("Azure Security Center", "Microsoft Defender for Cloud", "Azure Active Directory Identity Protection", "Microsoft Defender for Identity")
+      | project TimeGenerated, AlertName, AlertSeverity, CompromisedEntity, Tactics, Description
+      | order by TimeGenerated desc
+    tested: null
+    attack:
+      - "T1685"
+  - id: "cloud-incident-response/azure/s6-a-principal-reaching-subscriptions-it-never-touc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Lateral movement"
+    stage_ord: 6
+    platform: "Azure"
+    title: "A principal reaching subscriptions it never touched; Lighthouse, management groups, tenant moves"
+    why: "Azure lateral movement is the same identity acting in a subscription it has no history in, a role assignment at management-group scope that cascades everywhere, a Lighthouse registration that delegates your subscription to another tenant, or a subscription accepted into or out of the tenant. Elevate access (stage 3) is the tenant-wide version. The Entra side is a B2B invite or Add partner to company (GDAP)."
+    how: "Delegations in force now: az managedservices assignment list --include-definition for Lighthouse, Get-MgTenantRelationshipDelegatedAdminRelationship for GDAP partners."
+    fp: "platform administrators and the landing-zone pipeline touch every subscription, so the first-seen join lists them whenever retention is shorter than their cadence; exclude them by Caller. The baseline needs a workspace — the portal's 90 days are not queryable here — and must be longer than the dwell time."
+    query: |-
+      let baseline = AzureActivity | where TimeGenerated between (ago(30d) .. ago(7d)) | distinct Caller, SubscriptionId;
+      AzureActivity
+      | where TimeGenerated > ago(7d)
+      | join kind=leftanti baseline on Caller, SubscriptionId
+      | summarize First = min(TimeGenerated), Ops = count(), Operations = make_set(OperationNameValue, 8),
+                  IPs = make_set(CallerIpAddress, 5) by Caller, SubscriptionId
+      | union (
+          AzureActivity
+          | where TimeGenerated > ago(7d)
+          | where OperationNameValue in~ ("MICROSOFT.MANAGEDSERVICES/REGISTRATIONASSIGNMENTS/WRITE",
+                                         "MICROSOFT.MANAGEDSERVICES/REGISTRATIONDEFINITIONS/WRITE",
+                                         "MICROSOFT.MANAGEMENT/MANAGEMENTGROUPS/SUBSCRIPTIONS/WRITE",
+                                         "MICROSOFT.SUBSCRIPTION/ACCEPTCHANGETENANT/ACTION")
+          | project First = TimeGenerated, Caller, SubscriptionId, Ops = 1,
+                    Operations = pack_array(OperationNameValue), IPs = pack_array(CallerIpAddress))
+      | order by First desc
+    tested: null
+    attack:
+      - "T1021.007"
+      - "T1550.001"
+  - id: "cloud-incident-response/azure/s7-vms-scale-sets-aks-ml-compute-batch-azure-openai"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Resource abuse"
+    stage_ord: 7
+    platform: "Azure"
+    title: "VMs, scale sets, AKS, ML compute, Batch, Azure OpenAI deployments, quota tickets"
+    why: "miners come as scale sets and AKS node pools in regions you don't use, and ML compute or Batch pools with GPU SKUs; since 2024 the same stolen principal is used to create Azure OpenAI deployments and resell the access. A support ticket for a quota increase is the attacker preparing; a new subscription on your billing account is where the bill hides."
+    how: null
+    fp: "autoscale writes scale sets and AKS node pools under its own identity and every deployment pipeline writes VMs. Filter to human callers and the compromised principal; what is running now and where (next hunt) and the bill by region and service decide it."
+    query: |-
+      AzureActivity
+      | where TimeGenerated > ago(14d)
+      | where ActivityStatusValue =~ "Success"
+      | where OperationNameValue in~ ("MICROSOFT.COMPUTE/VIRTUALMACHINES/WRITE", "MICROSOFT.COMPUTE/VIRTUALMACHINESCALESETS/WRITE",
+              "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/WRITE", "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/AGENTPOOLS/WRITE",
+              "MICROSOFT.MACHINELEARNINGSERVICES/WORKSPACES/COMPUTES/WRITE", "MICROSOFT.BATCH/BATCHACCOUNTS/POOLS/WRITE",
+              "MICROSOFT.CONTAINERINSTANCE/CONTAINERGROUPS/WRITE", "MICROSOFT.COGNITIVESERVICES/ACCOUNTS/WRITE",
+              "MICROSOFT.COGNITIVESERVICES/ACCOUNTS/DEPLOYMENTS/WRITE", "MICROSOFT.SUPPORT/SUPPORTTICKETS/WRITE",
+              "MICROSOFT.QUOTA/QUOTAS/WRITE", "MICROSOFT.SUBSCRIPTION/ALIASES/WRITE")
+      | summarize Writes = count(), First = min(TimeGenerated), Last = max(TimeGenerated),
+                  Resources = make_set(ResourceId, 10) by Caller, CallerIpAddress, OperationNameValue, SubscriptionId
+      | order by Writes desc
+    tested: null
+    attack:
+      - "T1496.001"
+      - "T1496.004"
+  - id: "cloud-incident-response/azure/s7-what-is-running-now-gpu-and-hpc-skus-and-anythin"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Resource abuse"
+    stage_ord: 7
+    platform: "Azure"
+    title: "What is running now — GPU and HPC SKUs and anything created this week"
+    why: "Resource Graph answers across every subscription in one call and does not depend on log retention; properties.timeCreated dates the launch. Cost Management by resource location and meter for the same window is the figure for the billing case."
+    how: null
+    fp: "your ML and HPC teams own N- and H-series by design; anything in a region or subscription they don't use, or created by the compromised principal (match name back to the AzureActivity rows), is the finding."
+    query: |-
+      az graph query --first 1000 -o table -q "
+        resources
+        | where type in~ ('microsoft.compute/virtualmachines', 'microsoft.compute/virtualmachinescalesets',
+                          'microsoft.machinelearningservices/workspaces/computes', 'microsoft.cognitiveservices/accounts')
+        | extend size = tostring(coalesce(properties.hardwareProfile.vmSize, sku.name)),
+                 created = todatetime(properties.timeCreated)
+        | where size matches regex '^Standard_(N|H)' or created > ago(7d)
+        | project created, name, type, location, size, subscriptionId, resourceGroup
+        | order by created desc"
+    tested: null
+    attack:
+      - "T1496.001"
+  - id: "cloud-incident-response/azure/s8-storage-keys-and-sas-listed-vault-and-firewall-o"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Data access"
+    stage_ord: 8
+    platform: "Azure"
+    title: "Storage keys and SAS listed, vault and firewall opened, disks exported, commands run"
+    why: "a listed account key gives full data access and signs SAS tokens you cannot see or revoke one by one; beginGetAccess on a disk or snapshot hands out a SAS to download the whole VHD; a storage-account or Key Vault write that sets defaultAction: Allow or allowBlobPublicAccess opens the door from the internet; config/list on a web app dumps its app settings; Run Command executes as SYSTEM or root without a login."
+    how: null
+    fp: "listKeys is called by every portal blade that opens a storage account and by Terraform on every plan; Defender and backup list keys too. Group by Caller and look for the compromised principal, a human at an odd hour, or a beginGetAccess at all outside a known migration."
+    query: |-
+      AzureActivity
+      | where TimeGenerated > ago(14d)
+      | where ActivityStatusValue =~ "Success"
+      | where OperationNameValue in~ ("MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTKEYS/ACTION", "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTACCOUNTSAS/ACTION",
+              "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTSERVICESAS/ACTION", "MICROSOFT.STORAGE/STORAGEACCOUNTS/REGENERATEKEY/ACTION",
+              "MICROSOFT.STORAGE/STORAGEACCOUNTS/WRITE", "MICROSOFT.STORAGE/STORAGEACCOUNTS/BLOBSERVICES/CONTAINERS/WRITE",
+              "MICROSOFT.COMPUTE/SNAPSHOTS/BEGINGETACCESS/ACTION", "MICROSOFT.COMPUTE/DISKS/BEGINGETACCESS/ACTION",
+              "MICROSOFT.COMPUTE/VIRTUALMACHINES/RUNCOMMAND/ACTION", "MICROSOFT.COMPUTE/VIRTUALMACHINES/RUNCOMMANDS/WRITE",
+              "MICROSOFT.DOCUMENTDB/DATABASEACCOUNTS/LISTKEYS/ACTION", "MICROSOFT.DOCUMENTDB/DATABASEACCOUNTS/LISTCONNECTIONSTRINGS/ACTION",
+              "MICROSOFT.SQL/SERVERS/FIREWALLRULES/WRITE", "MICROSOFT.SQL/SERVERS/DATABASES/EXPORT/ACTION",
+              "MICROSOFT.KEYVAULT/VAULTS/WRITE", "MICROSOFT.KEYVAULT/VAULTS/ACCESSPOLICIES/WRITE",
+              "MICROSOFT.WEB/SITES/CONFIG/LIST/ACTION", "MICROSOFT.WEB/SITES/PUBLISHXML/ACTION")
+      | project TimeGenerated, OperationNameValue, Caller, CallerIpAddress, ResourceId
+      | order by TimeGenerated desc
+    tested: null
+    attack:
+      - "T1530"
+      - "T1537"
+      - "T1555.006"
+  - id: "cloud-incident-response/azure/s8-what-was-read-key-vault-and-blob-data-plane-logs"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Data access"
+    stage_ord: 8
+    platform: "Azure"
+    title: "What was read — Key Vault and blob data-plane logs"
+    why: "AZKVAuditLogs shows every SecretGet, KeyDecrypt and SecretList with the caller's claims; StorageBlobLogs shows every GetBlob with the auth type — a SAS or account-key read carries no identity, only an AuthenticationHash and an IP. Both need the resource diagnostic setting (AuditEvent; StorageRead) and are off by default; if they were off, the notification is scoped on what the principal could read, and the status line says so. A Defender for Storage alert on mass extraction or SAS use from an unusual IP is often the first sign; record its user agent, auth type and source IP. Re-read the alert at intervals and log the extracted size and file count each time, because they keep growing after the alert first fires."
+    how: null
+    fp: "workloads read their secrets on every start and CDN, backup and replication read every blob; the compromised principal, a human UPN, a new IP, or SAS / AccountKey reads from outside Azure ranges are the finding. Order by Objects as well as Calls: breadth is the exfiltration signal."
+    query: |-
+      let kv = AZKVAuditLogs
+      | where TimeGenerated > ago(14d)
+      | where OperationName in ("SecretGet", "SecretList", "SecretBackup", "KeyDecrypt", "KeyUnwrap", "KeySign", "KeyBackup", "CertificateGet",
+                                "VaultAccessPolicyChangedEventGridNotification")
+      | extend Source = "KeyVault",
+               Who = tostring(coalesce(Identity.claim["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn"], Identity.claim.appid, Identity.claim.oid))
+      | summarize Calls = count(), Ops = make_set(OperationName, 10), Objects = dcount(Id), First = min(TimeGenerated), Last = max(TimeGenerated)
+          by Source, Who, CallerIpAddress;
+      let blob = StorageBlobLogs
+      | where TimeGenerated > ago(14d)
+      | where OperationName in ("GetBlob", "ListBlobs", "CopyBlob", "GetBlobProperties", "ListContainers")
+      | extend Source = "Blob", Who = strcat(AuthenticationType, ":", coalesce(RequesterObjectId, RequesterAppId, AuthenticationHash))
+      | summarize Calls = count(), Ops = make_set(OperationName, 10), Objects = dcount(ObjectKey), First = min(TimeGenerated), Last = max(TimeGenerated)
+          by Source, Who, CallerIpAddress;
+      kv | union blob | order by Calls desc
+    tested: null
+    attack:
+      - "T1555.006"
+      - "T1530"
+  - id: "cloud-incident-response/azure/s8-bytes-out-of-a-compromised-vm-vnet-flow-logs"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Data access"
+    stage_ord: 8
+    platform: "Azure"
+    title: "Bytes out of a compromised VM — VNet flow logs"
+    why: "for a workload foothold the control plane shows nothing of the exfiltration or the C2; Traffic Analytics over VNet flow logs does, as one-minute aggregates with byte counts and a classification of the far end. Off by default; NSG flow logs are retiring (no new ones since mid-2025) and the VNet variant writes to the same table."
+    how: null
+    fp: "Windows Update, package mirrors, the Azure Monitor agent and backup to AzurePublic endpoints dominate; read ExternalPublic and MaliciousFlow first, then what is left on 443 to an address with no history, or anything on 4444, 8333 or 3333."
+    query: |-
+      NTANetAnalytics
+      | where TimeGenerated > ago(7d)
+      | where SubType == "FlowLog"
+      | where SrcIp == "<vm-private-ip>"
+      | where FlowType in ("ExternalPublic", "MaliciousFlow", "AzurePublic")
+      | summarize Bytes = sum(BytesSrcToDest + BytesDestToSrc), Flows = count(), First = min(TimeGenerated), Last = max(TimeGenerated)
+          by DestIp, DestPublicIps, DestPort, L4Protocol, FlowType
+      | order by Bytes desc
+      | take 50
+    tested: null
+    attack:
+      - "T1041"
+      - "T1048"
+  - id: "cloud-incident-response/azure/s9-backups-snapshots-vaults-keys-and-locks-deleted"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Impact"
+    stage_ord: 9
+    platform: "Azure"
+    title: "Backups, snapshots, vaults, keys and locks deleted; soft delete switched off; mass blob deletes"
+    why: "the Azure ransomware pattern is backupconfig/write turning soft delete off, then protected items and recovery points deleted, a Resource Guard removed to defeat multi-user authorisation, snapshots and disks deleted, a vault purged past its soft-delete window, an encryption scope rewritten to an attacker-controlled key, and a resource lock deleted a minute before each of them. Blob deletes are data plane and only visible if StorageDelete logging was on."
+    how: null
+    fp: "lifecycle management policies and cleanup jobs delete blobs in bulk on a schedule and disk deletes follow every VM rebuild; match the hour and the caller. The 500-per-hour line is a starting point. Any backupconfig/write, Resource Guard delete, vault purge or encryption-scope write outside a ticket is the finding on its own."
+    query: |-
+      let arm = AzureActivity
+      | where TimeGenerated > ago(14d)
+      | where ActivityStatusValue =~ "Success"
+      | where OperationNameValue in~ ("MICROSOFT.RECOVERYSERVICES/VAULTS/DELETE", "MICROSOFT.RECOVERYSERVICES/VAULTS/BACKUPCONFIG/WRITE",
+              "MICROSOFT.RECOVERYSERVICES/VAULTS/BACKUPFABRICS/PROTECTIONCONTAINERS/PROTECTEDITEMS/DELETE",
+              "MICROSOFT.RECOVERYSERVICES/VAULTS/BACKUPFABRICS/PROTECTIONCONTAINERS/PROTECTEDITEMS/RECOVERYPOINTS/DELETE",
+              "MICROSOFT.DATAPROTECTION/BACKUPVAULTS/DELETE", "MICROSOFT.DATAPROTECTION/BACKUPVAULTS/BACKUPINSTANCES/DELETE",
+              "MICROSOFT.DATAPROTECTION/RESOURCEGUARDS/DELETE",
+              "MICROSOFT.COMPUTE/SNAPSHOTS/DELETE", "MICROSOFT.COMPUTE/DISKS/DELETE", "MICROSOFT.COMPUTE/VIRTUALMACHINES/DELETE",
+              "MICROSOFT.COMPUTE/RESTOREPOINTCOLLECTIONS/DELETE",
+              "MICROSOFT.STORAGE/STORAGEACCOUNTS/DELETE", "MICROSOFT.STORAGE/STORAGEACCOUNTS/BLOBSERVICES/CONTAINERS/DELETE",
+              "MICROSOFT.STORAGE/STORAGEACCOUNTS/BLOBSERVICES/WRITE", "MICROSOFT.STORAGE/STORAGEACCOUNTS/MANAGEMENTPOLICIES/WRITE",
+              "MICROSOFT.STORAGE/STORAGEACCOUNTS/ENCRYPTIONSCOPES/WRITE",
+              "MICROSOFT.KEYVAULT/VAULTS/DELETE", "MICROSOFT.KEYVAULT/MANAGEDHSMS/DELETE", "MICROSOFT.KEYVAULT/LOCATIONS/DELETEDVAULTS/PURGE/ACTION",
+              "MICROSOFT.SQL/SERVERS/DATABASES/DELETE", "MICROSOFT.SQL/SERVERS/DELETE", "MICROSOFT.DBFORPOSTGRESQL/FLEXIBLESERVERS/DELETE",
+              "MICROSOFT.AUTHORIZATION/LOCKS/DELETE", "MICROSOFT.RESOURCES/SUBSCRIPTIONS/RESOURCEGROUPS/DELETE",
+              "MICROSOFT.RESOURCES/DEPLOYMENTSTACKS/DELETE")
+      | project TimeGenerated, Source = "ARM", Op = OperationNameValue, Who = Caller, IP = CallerIpAddress, Target = ResourceId;
+      let blob = StorageBlobLogs
+      | where TimeGenerated > ago(14d)
+      | where OperationName in ("DeleteBlob", "DeleteContainer", "SetBlobTier", "PutBlob", "CopyBlob")
+      | summarize Count = count(), First = min(TimeGenerated)
+          by bin(TimeGenerated, 1h), OperationName, AuthenticationType, Who = coalesce(RequesterObjectId, RequesterAppId, AuthenticationHash),
+             IP = CallerIpAddress, AccountName
+      | where Count > 500
+      | project TimeGenerated = First, Source = "Blob", Op = strcat(OperationName, " x", Count), Who, IP, Target = AccountName;
+      arm | union blob | order by TimeGenerated desc
+    tested: null
+    attack:
+      - "T1485"
+      - "T1486"
+      - "T1490"
+  - id: "cloud-incident-response/gcp/s1-everything-one-principal-did-from-where-with-whi"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "GCP"
+    title: "Everything one principal did, from where, with which client and which key"
+    why: "caller IP, user agent and serviceAccountKeyName separate the attacker's use of a key from the workload's own: a workload calls from its own egress with an SDK string; the attacker calls from elsewhere with gcloud or python-requests, and the key name says which of the account's keys leaked."
+    how: "Keys and their state: gcloud iam service-accounts keys list --iam-account=<sa-email> --format='table(name.basename(),validAfterTime,disabled,keyType)'. If the organisation policy iam.serviceAccountKeyExposureResponse is DISABLE_KEY (the default since June 2024), Google disables a key it finds in a public repository and writes an audit-log event and an email to the project owners and security contacts; under WAIT_FOR_ABUSE it only notifies."
+    fp: "a service account used from Compute Engine shows an internal or the project's NAT address and a Google client-library user agent; the same account from a residential IP with gcloud is the finding. Workload Identity Federation principals carry principalSubject instead of principalEmail — query both."
+    query: |-
+      gcloud logging read \
+        'logName:"cloudaudit.googleapis.com" AND protoPayload.authenticationInfo.principalEmail="<principal-email>"' \
+        --project=<project-id> --freshness=14d --order=asc \
+        --format='table(timestamp,protoPayload.serviceName,protoPayload.methodName,protoPayload.requestMetadata.callerIp,protoPayload.requestMetadata.callerSuppliedUserAgent,protoPayload.authenticationInfo.serviceAccountKeyName,protoPayload.status.code)'
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "cloud-incident-response/gcp/s2-enumeration-and-permission-probing-only-visible"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Discovery"
+    stage_ord: 2
+    platform: "GCP"
+    title: "Enumeration and permission probing — only visible with Data Access logs on"
+    why: "every Get, List, TestIamPermissions and asset search is an ADMIN_READ or DATA_READ entry, which Google does not log unless Data Access audit logs were enabled for the service or for all services. If they were off, discovery is invisible and the status line says so; Security Command Center's Event Threat Detection still raises Discovery: Service Account Self-Investigation from its own feed."
+    how: "SCC findings for the window: gcloud scc findings list <org-id> --source=- --filter='category=\"Discovery: Service Account Self-Investigation\" AND state=\"ACTIVE\"' (Premium or Enterprise tier)."
+    fp: "Security Command Center, Prowler, Forseti and every terraform plan do this on a schedule; exclude their service accounts. A burst of TestIamPermissions across many resources from one principal is a permission enumerator, not an admin."
+    query: |-
+      gcloud logging read \
+        'logName:"cloudaudit.googleapis.com%2Fdata_access" AND
+         protoPayload.methodName:("GetIamPolicy" OR "TestIamPermissions" OR "ListServiceAccounts" OR "ListServiceAccountKeys" OR
+                                  "SearchAllIamPolicies" OR "SearchAllResources" OR "ListProjects" OR "storage.buckets.list" OR
+                                  "ListSecrets" OR "ListCryptoKeys" OR "compute.instances.list" OR "compute.projects.get")' \
+        --project=<project-id> --freshness=7d \
+        --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.methodName,protoPayload.requestMetadata.callerIp,protoPayload.requestMetadata.callerSuppliedUserAgent)'
+    tested: null
+    attack:
+      - "T1087.004"
+      - "T1526"
+      - "T1580"
+  - id: "cloud-incident-response/gcp/s3-iam-bindings-added-with-the-member-and-the-role"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Privilege escalation"
+    stage_ord: 3
+    platform: "GCP"
+    title: "IAM bindings added, with the member and the role"
+    why: "every GCP escalation ends in a SetIamPolicy, and the entry carries the diff: bindingDeltas with ADD, the role and the member. Owner, Editor, any *Admin, iam.serviceAccountTokenCreator or iam.serviceAccountUser on a privileged account is the escalation; a new key on someone else's service account (stage 4) is the same thing by another route."
+    how: "Organisation- and folder-level bindings are logged at that resource: rerun with --organization=<org-id> or --folder=<id>. The before/after policy, independent of log retention: gcloud asset get-history --project=<project-id> --asset-names=//cloudresourcemanager.googleapis.com/projects/<project-id> --content-type=iam-policy --start-time=<window-start>."
+    fp: "Terraform rewrites bindings on every apply, producing ADD and REMOVE pairs from the deploy service account; exclude it. Focus on roles/owner, roles/editor, roles/iam.* and any member outside your domain, allUsers or allAuthenticatedUsers."
+    query: |-
+      gcloud logging read \
+        'logName:"cloudaudit.googleapis.com%2Factivity" AND protoPayload.methodName:"SetIamPolicy" AND
+         protoPayload.serviceData.policyDelta.bindingDeltas.action="ADD"' \
+        --project=<project-id> --freshness=14d \
+        --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.resourceName,protoPayload.serviceData.policyDelta.bindingDeltas[].role,protoPayload.serviceData.policyDelta.bindingDeltas[].member)'
+    tested: null
+    attack:
+      - "T1098.003"
+      - "T1548.005"
+  - id: "cloud-incident-response/gcp/s4-service-accounts-and-keys-ssh-keys-in-metadata-o"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Persistence"
+    stage_ord: 4
+    platform: "GCP"
+    title: "Service accounts and keys, SSH keys in metadata, OS Login off, scheduled code, identity pools, new projects"
+    why: "a downloaded service-account key works from anywhere until it is disabled; an ssh-keys entry in instance or project metadata is a login that survives every IAM change (and enable-oslogin=false makes room for it); a startup script, Cloud Scheduler job, Cloud Function or Cloud Run service is code on a timer; a workload identity pool provider trusts an issuer the attacker controls; a new project on your billing account is where the next stage hides."
+    how: "Metadata hits: read the full entry ( --format=json ) for the keys ssh-keys, enable-oslogin and startup-script. Identity pools in force: gcloud iam workload-identity-pools providers list --workload-identity-pool=<pool> --location=global --format='table(name,issuerUri,attributeCondition)' — an empty attribute condition trusts every identity the issuer vouches for."
+    fp: "gcloud compute ssh by an administrator writes setMetadata with their own key, and deployment pipelines create service accounts, functions and Cloud Run revisions on every release; exclude the deploy account and known admins. A key you don't recognise, enable-oslogin=false, a provider with no attribute condition, or a project created by the compromised principal is the finding."
+    query: |-
+      gcloud logging read \
+        'logName:"cloudaudit.googleapis.com%2Factivity" AND
+         protoPayload.methodName:("CreateServiceAccount" OR "CreateServiceAccountKey" OR "UploadServiceAccountKey" OR "EnableServiceAccount" OR
+                                  "setMetadata" OR "setCommonInstanceMetadata" OR "ImportSshPublicKey" OR
+                                  "CreateWorkloadIdentityPool" OR "CreateWorkloadIdentityPoolProvider" OR "UpdateWorkloadIdentityPoolProvider" OR
+                                  "CloudScheduler.CreateJob" OR "CloudScheduler.UpdateJob" OR "FunctionService.CreateFunction" OR "FunctionService.UpdateFunction" OR
+                                  "CloudFunctionsService.CreateFunction" OR "CloudFunctionsService.UpdateFunction" OR
+                                  "Services.CreateService" OR "Services.ReplaceService" OR "Eventarc.CreateTrigger" OR
+                                  "CreateProject" OR "UpdateProjectBillingInfo")' \
+        --project=<project-id> --freshness=30d \
+        --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.methodName,protoPayload.resourceName,protoPayload.requestMetadata.callerIp)'
+      # projects attached to the billing account, including ones in no folder you watch
+      gcloud logging read 'protoPayload.methodName:"UpdateProjectBillingInfo"' --billing-account=<billing-account-id> --freshness=30d \
+        --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.resourceName)'
+    tested: null
+    attack:
+      - "T1098.001"
+      - "T1136.003"
+      - "T1098.004"
+  - id: "cloud-incident-response/gcp/s5-sinks-exclusions-log-buckets-data-access-config"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Defence evasion"
+    stage_ord: 5
+    platform: "GCP"
+    title: "Sinks, exclusions, log buckets, Data Access config, organisation policy, SCC mutes, flow logs"
+    why: "a changed sink filter stops shipping logs to your SIEM while the console looks normal; an exclusion drops entries before they are stored; a bucket retention cut or DeleteLog removes what is there; a SetIamPolicy carrying auditConfigDeltas turns Data Access logging off; an organisation-policy change removes the guardrail; an SCC mute rule hides the finding; a subnet patch turns off its flow logs."
+    how: "Aggregated sinks and organisation policies are logged at the organisation: rerun with --organization=<org-id>. What is in force now: gcloud logging sinks list --organization=<org-id>, gcloud logging sinks list --project=<project-id> and gcloud logging buckets describe _Default --location=global --project=<project-id> for retention."
+    fp: "the platform team edits sinks and bucket retention during log-pipeline work and Terraform re-applies organisation policies; match each hit to a ticket. An exclusion or a Data Access config change from the compromised principal, or without a ticket, is the finding."
+    query: |-
+      gcloud logging read \
+        'logName:"cloudaudit.googleapis.com%2Factivity" AND (
+           (protoPayload.serviceName="logging.googleapis.com" AND
+            protoPayload.methodName:("DeleteSink" OR "UpdateSink" OR "CreateExclusion" OR "UpdateExclusion" OR "DeleteBucket" OR "UpdateBucket" OR "UpdateCmekSettings" OR "DeleteLog"))
+           OR protoPayload.serviceData.policyDelta.auditConfigDeltas:*
+           OR protoPayload.serviceName="orgpolicy.googleapis.com"
+           OR (protoPayload.serviceName="securitycenter.googleapis.com" AND protoPayload.methodName:("MuteConfig" OR "DeleteNotificationConfig" OR "BulkMuteFindings"))
+           OR protoPayload.methodName:"compute.subnetworks.patch")' \
+        --project=<project-id> --freshness=30d \
+        --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.serviceName,protoPayload.methodName,protoPayload.resourceName)'
+    tested: null
+    attack:
+      - "T1685.002"
+  - id: "cloud-incident-response/gcp/s6-impersonation-and-delegation-chains-who-minted-t"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Lateral movement"
+    stage_ord: 6
+    platform: "GCP"
+    title: "Impersonation and delegation chains — who minted tokens for which service account"
+    why: "GCP lateral movement is GenerateAccessToken, GenerateIdToken, SignBlob or SignJwt on a service account the attacker can impersonate, hopping from account to account and project to project; serviceAccountDelegationInfo lists the chain. These are Data Access entries on iamcredentials.googleapis.com and exist only if Data Access audit logs for the IAM API were on in the project that owns the target account."
+    how: "Where the compromised principal holds anything, across the organisation and independent of logs: gcloud asset search-all-iam-policies --scope=organizations/<org-id> --query='policy:<principal-email>'. Then rerun the stage 1 query in every project it names."
+    fp: "Workload Identity Federation, Terraform with impersonate_service_account and Cloud Build mint tokens constantly. The finding is a chain whose first party is a human, a key-based account from another project, or a target account that had no impersonators in the previous 30 days."
+    query: |-
+      gcloud logging read \
+        'logName:"cloudaudit.googleapis.com%2Fdata_access" AND protoPayload.serviceName="iamcredentials.googleapis.com" AND
+         protoPayload.methodName:("GenerateAccessToken" OR "GenerateIdToken" OR "SignBlob" OR "SignJwt")' \
+        --project=<project-id> --freshness=14d \
+        --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.methodName,protoPayload.request.name,protoPayload.requestMetadata.callerIp,protoPayload.authenticationInfo.serviceAccountDelegationInfo[].firstPartyPrincipal.principalEmail)'
+    tested: null
+    attack:
+      - "T1550.001"
+      - "T1021.007"
+  - id: "cloud-incident-response/gcp/s7-compute-gke-dataproc-vertex-ai-cloud-run-jobs-ba"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Resource abuse"
+    stage_ord: 7
+    platform: "GCP"
+    title: "Compute, GKE, Dataproc, Vertex AI, Cloud Run jobs, Batch and quota requests in every project"
+    why: "miners create instances in zones and projects nobody watches, and in the shapes nobody watches: managed instance groups, GKE node pools, Dataproc clusters, Vertex AI custom jobs, Cloud Run jobs. A quota preference for GPUs is the attacker preparing; Vertex AI model access is the 2024-onward variant of the same theft."
+    how: "What is running now, with accelerators, per project: gcloud compute instances list --project=<project-id> --filter='guestAccelerators:* OR creationTimestamp>-P7D' --format='table(name,zone.basename(),machineType.basename(),guestAccelerators[].acceleratorType.basename(),creationTimestamp)'. The billing export to BigQuery, by SKU and region for the window, is the figure for the billing case."
+    fp: "autoscalers act as the Compute Engine service agent ( service-<n>@compute-system.iam.gserviceaccount.com ) and GKE scales node pools on its own; exclude service agents and your known regions. A human or key-based principal creating instances in a region you never use, or any GPU request at all outside the ML project, is the finding."
+    query: |-
+      for p in $(gcloud projects list --format='value(projectId)'); do
+        gcloud logging read \
+          'logName:"cloudaudit.googleapis.com%2Factivity" AND
+           protoPayload.methodName:("compute.instances.insert" OR "compute.instances.bulkInsert" OR "instanceGroupManagers.insert" OR "instanceGroupManagers.resize" OR
+                                    "ClusterManager.CreateCluster" OR "ClusterManager.CreateNodePool" OR "ClusterController.CreateCluster" OR
+                                    "JobService.CreateCustomJob" OR "Jobs.CreateJob" OR "Jobs.RunJob" OR "BatchService.CreateJob" OR "CreateQuotaPreference")' \
+          --project="$p" --freshness=7d \
+          --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.methodName,protoPayload.resourceName,protoPayload.request.machineType)' \
+          | sed "s/^/$p  /"
+      done
+    tested: null
+    attack:
+      - "T1496.001"
+      - "T1496.004"
+  - id: "cloud-incident-response/gcp/s8-buckets-made-public-snapshots-and-images-shared"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Data access"
+    stage_ord: 8
+    platform: "GCP"
+    title: "Buckets made public, snapshots and images shared, exports, secret and SQL exposure"
+    why: "allUsers or allAuthenticatedUsers on a bucket opens it to the internet without a single object read; an IAM change on a snapshot or image shares the whole disk to another project; a Cloud SQL export or a backup run copies the database out; a secret's IAM policy or a new version is the attacker reaching the secret store. All of these are Admin Activity entries, so they exist even when Data Access logging was off."
+    how: null
+    fp: "backup schedules create snapshots as the service agent and storage.buckets.update is written by Terraform on every apply; the member allUsers is never a false positive. Group by principal and look for the compromised one, a human, or a target project outside your organisation."
+    query: |-
+      gcloud logging read \
+        'logName:"cloudaudit.googleapis.com%2Factivity" AND (
+           (protoPayload.methodName="storage.setIamPermissions" AND
+            protoPayload.serviceData.policyDelta.bindingDeltas.member:("allUsers" OR "allAuthenticatedUsers"))
+           OR protoPayload.methodName:("compute.snapshots.setIamPolicy" OR "compute.images.setIamPolicy" OR "compute.disks.createSnapshot" OR
+                                       "compute.snapshots.insert" OR "compute.images.insert" OR "storage.buckets.update" OR
+                                       "instances.export" OR "backupRuns.insert" OR "SecretManagerService.SetIamPolicy" OR "SecretManagerService.AddSecretVersion"))' \
+        --project=<project-id> --freshness=14d \
+        --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.methodName,protoPayload.resourceName,protoPayload.requestMetadata.callerIp)'
+    tested: null
+    attack:
+      - "T1530"
+      - "T1537"
+      - "T1555.006"
+  - id: "cloud-incident-response/gcp/s8-what-was-read-cloud-storage-secret-manager-and-b"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Data access"
+    stage_ord: 8
+    platform: "GCP"
+    title: "What was read — Cloud Storage, Secret Manager and BigQuery data access"
+    why: "object reads ( storage.objects.get ), AccessSecretVersion and KMS Decrypt are Data Access entries and exist only if logging was enabled for those services before the incident — and then only in _Default for 30 days by default. BigQuery is the exception: its Data Access logs are on by default, so table reads are always answerable. If the storage logs were off, say so and scope the notification on what the principal could read."
+    how: null
+    fp: "CDN, backup and replication accounts read every object and workloads read their secrets on every start; the compromised principal, a human, or a new caller IP on a service account is the finding. Count distinct resourceName s, not calls: breadth is the exfiltration signal."
+    query: |-
+      gcloud logging read \
+        'logName:"cloudaudit.googleapis.com%2Fdata_access" AND protoPayload.authenticationInfo.principalEmail="<principal-email>" AND
+         (protoPayload.methodName:("storage.objects.get" OR "storage.objects.list" OR "AccessSecretVersion" OR "Decrypt"))' \
+        --project=<project-id> --freshness=14d \
+        --format='table(timestamp,protoPayload.serviceName,protoPayload.methodName,protoPayload.resourceName,protoPayload.requestMetadata.callerIp,protoPayload.requestMetadata.callerSuppliedUserAgent)'
+      # BigQuery reads are logged by default
+      gcloud logging read \
+        'protoPayload.serviceName="bigquery.googleapis.com" AND protoPayload.metadata.tableDataRead:* AND protoPayload.authenticationInfo.principalEmail="<principal-email>"' \
+        --project=<project-id> --freshness=14d \
+        --format='table(timestamp,protoPayload.resourceName,protoPayload.metadata.tableDataRead.reason,protoPayload.requestMetadata.callerIp)'
+    tested: null
+    attack:
+      - "T1530"
+      - "T1555.006"
+  - id: "cloud-incident-response/gcp/s8-bytes-out-of-a-compromised-vm-vpc-flow-logs"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Data access"
+    stage_ord: 8
+    platform: "GCP"
+    title: "Bytes out of a compromised VM — VPC Flow Logs"
+    why: "for a workload foothold the audit logs show nothing of the exfiltration or the C2; the subnet's flow logs do, as 5-tuples with byte counts and the far end's country or VM. They are per subnet, off by default, and sampled (50% unless you changed it), so absence of a flow is not absence of traffic."
+    how: null
+    fp: "Google APIs ( private.googleapis.com and restricted.googleapis.com ranges), package mirrors and the Ops Agent dominate bytes; drop rows with a vm_name and Google's ranges first. What is left on 443 to an address with no history, or anything on 4444, 8333 or 3333, is the finding."
+    query: |-
+      gcloud logging read \
+        'logName:"logs/compute.googleapis.com%2Fvpc_flows" AND jsonPayload.connection.src_ip="<vm-internal-ip>"' \
+        --project=<project-id> --freshness=7d --limit=5000 --format=json \
+        | jq -r '.[] | .jsonPayload | [.connection.dest_ip, .connection.dest_port, .connection.protocol,
+                 (.bytes_sent | tonumber), (.dest_location.country // ""), (.dest_instance.vm_name // "")] | @tsv' \
+        | awk -F'\t' '{ b[$1"\t"$2"\t"$3"\t"$5"\t"$6] += $4 } END { for (k in b) print b[k] "\t" k }' \
+        | sort -rn | head -50
+    tested: null
+    attack:
+      - "T1041"
+      - "T1048"
+  - id: "cloud-incident-response/gcp/s9-buckets-snapshots-backups-databases-keys-secrets"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Impact"
+    stage_ord: 9
+    platform: "GCP"
+    title: "Buckets, snapshots, backups, databases, keys, secrets and projects deleted; billing detached; soft delete removed"
+    why: "a KMS key version destroyed makes every object it wrapped unreadable after the 24-hour-minimum scheduled-destruction window; a Backup and DR vault or Cloud SQL backup deleted removes the way back; DeleteProject starts a 30-day shutdown and UpdateProjectBillingInfo detaching the billing account stops every service in it; a storage.buckets.update that sets the soft-delete retention to zero or removes the retention policy is the attacker making the deletes stick. Object deletes themselves are Data Access entries."
+    how: "Soft-deleted objects (7-day default since 2024, 0–90 configurable): gcloud storage ls --soft-deleted gs://<bucket>/** and gcloud storage restore gs://<bucket>/<object>#<generation>. Key versions in DESTROY_SCHEDULED: gcloud kms keys versions restore before the window ends."
+    fp: "lifecycle rules delete objects as the service, managed instance groups churn disks through the service agent, and Terraform updates buckets on every apply. A human or key-based principal deleting backups, snapshots, key versions or projects, or any UpdateProjectBillingInfo you did not request, is the finding on its own."
+    query: |-
+      gcloud logging read \
+        'logName:"cloudaudit.googleapis.com%2Factivity" AND
+         protoPayload.methodName:("storage.buckets.delete" OR "storage.buckets.update" OR "compute.snapshots.delete" OR "compute.disks.delete" OR
+                                  "compute.instances.delete" OR "compute.images.delete" OR "instances.delete" OR "backupRuns.delete" OR
+                                  "DeleteBackupVault" OR "DeleteBackup" OR "DeleteBackupPlan" OR
+                                  "DestroyCryptoKeyVersion" OR "DisableCryptoKeyVersion" OR "UpdateCryptoKeyPrimaryVersion" OR
+                                  "DeleteSecret" OR "DestroySecretVersion" OR "DeleteProject" OR "UpdateProjectBillingInfo" OR
+                                  "DeleteDataset" OR "ClusterManager.DeleteCluster" OR "OrgPolicy.DeletePolicy")' \
+        --project=<project-id> --freshness=14d \
+        --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.methodName,protoPayload.resourceName,protoPayload.requestMetadata.callerIp)'
+      # object deletes and overwrites per hour and principal (Data Access, DATA_WRITE; off by default)
+      gcloud logging read 'logName:"cloudaudit.googleapis.com%2Fdata_access" AND protoPayload.methodName:("storage.objects.delete" OR "storage.objects.create")' \
+        --project=<project-id> --freshness=14d --format='value(timestamp,protoPayload.authenticationInfo.principalEmail)' \
+        | awk -F'\t' '{ print substr($1, 1, 13), $2 }' | sort | uniq -c | sort -rn | head
+    tested: null
+    attack:
+      - "T1485"
+      - "T1486"
+      - "T1490"
+steps:
+  - ord: 1
+    time: "T+0–10 min"
+    title: "Confirm the logs are still running"
+    why: "Check that the organisation trail is logging, GuardDuty / Defender for Cloud / Security Command Center are enabled, and the log sinks and diagnostic settings are intact. Turn back on anything that is off, and write down when it went off. Why: stopping the trail, deleting the detector and removing log sinks are among the first things a cloud attacker does. Every minute without logs is a minute you can't scope later."
+    critical: true
+  - ord: 2
+    time: "T+0–15 min"
+    title: "Declare, name one incident lead, move to out-of-band comms"
+    why: "if the attacker holds an admin identity they may also read the tenant's email and chat. One decision owner stops two engineers containing in conflicting ways — or one of them \"fixing\" the attacker's resources before they are preserved."
+    critical: true
+  - ord: 3
+    time: "T+0–15 min"
+    title: "Classify before acting"
+    why: "Which principal: a long-lived access key, a role or service-account session, a service-principal secret, a console user, the root / Global Admin? Which accounts, subscriptions and projects? What is happening: discovery, resource abuse (mining), data access, destruction? Why: the kind of credential decides how it is revoked, and the stage reached decides how wide to cut. Answer How Far Has It Got?, then pick the card in By Scenario."
+    critical: true
+  - ord: 4
+    time: "T+15–30 min"
+    title: "Revoke the credential — and the sessions it already minted"
+    why: "Deactivating a key or resetting a password does not end sessions already issued from it, and the three clouds differ in what does. AWS: AWSDenyAll on the user denies the user's own sessions on each call, but not sessions of roles the user assumed — each of those roles needs its own aws:TokenIssueTime deny, and that deny also breaks every workload sharing the role until it fetches a new session. Azure: disabling a service principal or running Revoke-MgUserSignInSession stops new tokens and kills refresh tokens; access tokens already issued stay valid until they expire (60–90 minutes by default), and Azure Resource Manager does not enforce the revocation early, so removing the role assignments is what actually ends ARM access. A managed identity's tokens are cached for about 24 hours and cannot be forced to refresh. GCP: disabling the service account rejects its existing access tokens (IAM API reference); disabling only a key does not say so, so disable the account. Why: a \"disabled\" key whose temporary credentials keep working for an hour is the most common way cloud containment silently fails. The full commands, per cloud, are under Hunt & Act."
+    critical: true
+  - ord: 5
+    time: "T+15–30 min"
+    title: "Quarantine the account, subscription or project if the scope is unknown"
+    why: "AWS: move the account into the quarantine OU, whose deny-all SCP exempts only your IR role. GCP: attach an IAM deny policy at the project or folder — it applies to tokens already minted, but only covers the permissions on Google's supported list, so when in doubt replace the project's IAM policy with an IR-only one (the T0 dump is what you restore from). Azure has no deny-all equivalent you can apply ad hoc: Azure Policy deny only blocks creating or changing resources through ARM, denyAction only blocks deletes, Deployment Stacks' deny settings only cover the stack's own resources, and none of them touch data-plane reads or Entra — so strip role assignments at subscription and management-group scope, disable the identities, and use a denyAction assignment to pin resources against deletion while you work. Why: this is the wide cut: one move that stops every credential in the boundary, including the ones you haven't found yet. Two gaps to know: SCPs never apply to the management account or to service-linked roles, and they don't stop principals from other organisations using access a resource policy already granted — that needs a resource control policy or the resource's own policy."
+    critical: true
+  - ord: 6
+    time: "T+30–45 min"
+    title: "Protect the way back"
+    why: "Confirm backups, snapshots, object versions and keys still exist and can't be deleted by the compromised principal: AWS Backup vault lock, S3 versioning and Object Lock, Azure Recovery Services soft delete (14 days) and multi-user authorisation through a Resource Guard, GCS soft delete (7 days by default, 0–90 configurable) and retention locks. Keys have windows too: a KMS key scheduled for deletion waits 7–30 days and can be cancelled, a Key Vault with soft delete keeps a deleted vault 7–90 days unless it was purged, a Cloud KMS version in DESTROY_SCHEDULED waits at least 24 hours and can be restored. Check each one now, then copy critical snapshots to an account the attacker has no path to. Why: deleting snapshots, backups and keys is how a cloud attacker turns a breach into an outage; once they see containment start, it is the next move, and a lifecycle rule that expires everything tomorrow is the quiet version."
+    critical: true
+  - ord: 7
+    time: "T+30–60 min"
+    title: "Memory, then snapshot, then isolate compromised workloads"
+    why: "Only where a VM, container host or function is the foothold, and in that order. Memory first, while the agent channel still works: SSM Run Command, az vm run-command or gcloud compute ssh running AVML (Linux) or a Windows memory tool staged in the evidence bucket, uploaded straight back to it. Then snapshot the disks; then cut the network and remove the workload's identity. Three traps: an isolation security group kills SSM unless the VPC has interface endpoints for ssm, ssmmessages and ec2messages and the group allows 443 to them; an EBS snapshot under the default aws/ebs key cannot be shared to the evidence account — copy it to a customer-managed key first; security-group and NSG rule changes don't cut connections already tracked — add a subnet NACL deny, or an Azure route table with next hop None, if the cut must be immediate. Don't terminate or deallocate. Why: terminating destroys disk and memory evidence and often the ephemeral logs on the host; detaching the instance profile stops new credentials, but ones already fetched from the metadata service stay valid until the role's sessions are revoked (step above). The per-cloud sequences are under Hunt & Act."
+    critical: true
+  - ord: 8
+    time: "T+0–60 min"
+    title: "Call the insurer, counsel — and open a case with the provider"
+    why: "the insurer's rules on approved IR firms apply here too, and counsel keeps the findings privileged. The provider sees things you can't — abuse reports about your IP addresses, key-exposure notices — and a billing dispute over attacker-run compute starts from an early support case."
+    critical: true
+actions:
+  - platform: "AWS"
+    label: "T+0–15 · Preserve"
+    name: "Validate the trail and dump the T0 state before you change anything"
+    tier: "write"
+    tier_inferred: false
+    why: "every revoke and quarantine below rewrites IAM; the authorization-details dump and the credential report are the only record of what the attacker's principals held, and which keys existed, before you cut them. validate-logs needs log-file validation enabled on the trail and proves the files in S3 are the ones CloudTrail delivered. The hash list is the chain of custody."
+    how: null
+    body: |-
+      aws cloudtrail validate-logs --region <trail-home-region> --trail-arn <org-trail-arn> --start-time <window-start>
+      aws iam get-account-authorization-details > t0-iam-$(date -u +%Y%m%dT%H%MZ).json
+      aws iam generate-credential-report && sleep 5 && \
+        aws iam get-credential-report --query Content --output text | base64 -d > t0-credential-report.csv
+      aws organizations list-accounts > t0-accounts.json          # from the management or a delegated-admin account
+      aws sso-admin list-instances > t0-identity-center.json       # then list-permission-sets / list-account-assignments per instance
+      sha256sum t0-* | tee t0-SHA256SUMS
+      aws s3 cp . s3://<evidence-bucket>/<case>/t0/ --recursive --exclude '*' --include 't0-*'   # bucket with Object Lock, in the evidence account
+    attack: []
+  - platform: "AWS"
+    label: "T+15–30 · Quarantine"
+    name: "Move the account into the quarantine OU"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the OU's deny-all SCP stops every credential in the account at once, including the ones you haven't found; only your IR role is exempt. Three gaps to know — SCPs never apply to the management account or to service-linked roles, and they don't stop principals in other organisations using access a resource policy already granted them (that needs a resource control policy or the resource's own policy). The OU and SCP must exist before the incident; building them now takes longer than the attacker needs."
+    how: null
+    body: |-
+      aws organizations move-account --account-id <id> \
+        --source-parent-id <current-ou> --destination-parent-id <quarantine-ou>
+      aws organizations list-policies-for-target --target-id <id> --filter SERVICE_CONTROL_POLICY --output table   # confirm it applied
+    attack: []
+  - platform: "AWS"
+    label: "T+15–30 · Revoke"
+    name: "Deactivate the user's key, deny the user, and find the roles it assumed"
+    tier: "destructive"
+    tier_inferred: false
+    why: "an inactive key stops new calls, and AWSDenyAll on the user denies the user's own sessions (console, GetSessionToken ) on each call. It does not touch sessions of roles the user assumed — those carry the role's permissions, not the user's, and keep working until the role itself is revoked (next step). Deleting the login profile removes the console password."
+    how: null
+    body: |-
+      aws iam update-access-key --user-name <user> --access-key-id <AKIA...> --status Inactive
+      aws iam attach-user-policy --user-name <user> --policy-arn arn:aws:iam::aws:policy/AWSDenyAll
+      aws iam delete-login-profile --user-name <user>          # NoSuchEntity means there was no console password
+      # every role this user assumed in the window needs its own session revoke (next step)
+      aws cloudtrail lookup-events --region us-east-1 --start-time <window-start> \
+        --lookup-attributes AttributeKey=Username,AttributeValue=<user> --output json \
+        | jq -r '.Events[] | select(.EventName == "AssumeRole") | .CloudTrailEvent | fromjson | .requestParameters.roleArn' | sort -u
+    attack: []
+  - platform: "AWS"
+    label: "T+15–30 · Revoke"
+    name: "Revoke the role's active sessions — and expect shared workloads to break"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the inline deny on aws:TokenIssueTime rejects every session minted before the timestamp, including the attacker's, on each call. It also rejects every legitimate session of that role: instance profiles, Lambda, EKS pods and pipelines using it fail until they fetch a new session, which SDKs only do at expiry — restart them. New sessions still work until the trust policy is fixed. The console's “Revoke active sessions” writes exactly this policy."
+    how: null
+    body: |-
+      NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      cat > revoke-older-sessions.json <<JSON
+      {"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"*","Resource":"*",
+        "Condition":{"DateLessThan":{"aws:TokenIssueTime":"$NOW"}}}]}
+      JSON
+      aws iam put-role-policy --role-name <role> --policy-name AWSRevokeOlderSessions --policy-document file://revoke-older-sessions.json
+      aws iam get-role --role-name <role> --query Role.AssumeRolePolicyDocument       # then narrow the trust before anyone re-assumes it
+    attack: []
+  - platform: "AWS"
+    label: "T+15–30 · Revoke"
+    name: "Root compromised: there is no session revoke — replace the credential"
+    tier: "destructive"
+    tier_inferred: false
+    why: "nothing revokes a root console session; it lives until it expires. The containment is a new password and a new MFA device, then watching for userIdentity.type = 'Root' after that time. With centralised root access enabled on the organisation, the management account can do it without the root password by assuming root with the IAMDeleteRootUserCredentials task policy (15-minute session) and deleting the login profile and MFA. Otherwise it is the root email's recovery flow — and if the attacker changed the email, AWS Support with proof of ownership."
+    how: null
+    body: |-
+      # from the management account, if enable-organizations-root-sessions was done in peacetime
+      aws sts assume-root --target-principal <member-account-id> --duration-seconds 900 \
+        --task-policy-arn arn=arn:aws:iam::aws:policy/root-task/IAMDeleteRootUserCredentials
+      # with those credentials:
+      aws iam delete-login-profile
+      aws iam list-mfa-devices && aws iam deactivate-mfa-device --serial-number <arn>
+      aws iam list-access-keys && aws iam delete-access-key --access-key-id <AKIA...>
+      # then, as root of the member account, set a new password and MFA; verify who is root now:
+      aws account get-contact-information && aws account get-alternate-contact --alternate-contact-type SECURITY
+    attack: []
+  - platform: "AWS"
+    label: "T+30–60 · Isolate"
+    name: "Memory, then snapshot, then isolate — in that order, and don't terminate"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the isolation security group cuts SSM too unless the VPC has interface endpoints for ssm, ssmmessages and ec2messages and the isolation group allows 443 to them, so take memory while the agent can still talk. AVML writes LiME format; stage it in the evidence bucket (write-only for the instance role) rather than fetching it from the internet. Snapshots encrypted with the default aws/ebs key cannot be shared to another account: copy to a customer-managed key whose policy includes the evidence account, then share. Security-group changes don't cut connections already tracked — add a subnet NACL deny if the cut must be immediate. Keep the instance profile attached until the memory upload has finished; credentials already fetched from the metadata service stay valid until the role's sessions are revoked."
+    how: null
+    body: |-
+      # 1. memory, while the network and the instance role are still there (Windows: AWS-RunPowerShellScript with a memory tool staged the same way)
+      aws ssm send-command --region <region> --instance-ids <i-id> --document-name AWS-RunShellScript --comment "IR <case> memory" \
+        --parameters 'commands=["aws s3 cp s3://<evidence-bucket>/tools/avml /tmp/avml","chmod +x /tmp/avml","/tmp/avml --compress /tmp/<i-id>.lime.compressed","aws s3 cp /tmp/<i-id>.lime.compressed s3://<evidence-bucket>/<case>/","sha256sum /tmp/<i-id>.lime.compressed"]'
+      # 2. disk
+      aws ec2 create-snapshot --volume-id <vol-id> --description "IR <case> <i-id>" \
+        --tag-specifications 'ResourceType=snapshot,Tags=[{Key=ir-case,Value=<case>}]'
+      aws ec2 copy-snapshot --source-region <region> --source-snapshot-id <snap-id> --encrypted --kms-key-id <evidence-cmk-arn>   # aws/ebs-encrypted snapshots cannot be shared
+      aws ec2 modify-snapshot-attribute --snapshot-id <copied-snap-id> --attribute createVolumePermission --operation-type add --user-ids <evidence-account>
+      # 3. isolate
+      aws ec2 modify-instance-attribute --instance-id <i-id> --groups <isolation-sg>
+      aws ec2 modify-instance-attribute --instance-id <i-id> --disable-api-termination
+      aws ec2 disassociate-iam-instance-profile --association-id <iip-assoc-id>
+    attack: []
+  - platform: "Azure"
+    label: "T+0–15 · Preserve"
+    name: "Dump the T0 state and export the Entra logs before you change anything"
+    tier: "write"
+    tier_inferred: false
+    why: "role assignments, app credentials and directory-role membership are what you are about to rewrite; Resource Graph and Graph give the authoritative “before” in minutes. The sign-in and audit exports matter because the tables keep 30 days on P1/P2 and 7 on the free tier, and the Activity Log 90 — all shorter than the investigation. The hash list is the chain of custody."
+    how: null
+    body: |-
+      az graph query --first 1000 -o json -q "authorizationresources | where type == 'microsoft.authorization/roleassignments'
+        | extend p = properties | project createdOn = p.createdOn, principalId = p.principalId, principalType = p.principalType,
+                                          roleDefinitionId = p.roleDefinitionId, scope = p.scope" > t0-roleassignments.json
+      az ad app list --all -o json --query "[].{appId:appId,name:displayName,secrets:passwordCredentials[].{keyId:keyId,end:endDateTime},certs:keyCredentials[].{keyId:keyId,end:endDateTime}}" > t0-app-creds.json
+      az ad sp list --all -o json --query "[].{id:id,appId:appId,name:displayName,enabled:accountEnabled,type:servicePrincipalType}" > t0-service-principals.json
+      Get-MgDirectoryRole -All | ForEach-Object { $r = $_; Get-MgDirectoryRoleMember -DirectoryRoleId $_.Id -All |
+        Select-Object @{n='Role';e={$r.DisplayName}}, Id, @{n='Upn';e={$_.AdditionalProperties.userPrincipalName}} } | Export-Csv t0-directory-roles.csv
+      Get-MgAuditLogSignIn -All -Filter "createdDateTime ge <window-start>" | Export-Csv t0-signins.csv
+      Get-MgAuditLogDirectoryAudit -All -Filter "activityDateTime ge <window-start>" | Export-Csv t0-directory-audit.csv
+      shasum -a 256 t0-* | tee t0-SHA256SUMS      # then copy the set into an immutable container in the evidence subscription
+    attack: []
+  - platform: "Azure"
+    label: "T+15–30 · Quarantine"
+    name: "Strip the principal's role assignments at every scope, and pin resources against deletion"
+    tier: "destructive"
+    tier_inferred: false
+    why: "removing the roles cuts what every credential of that principal can reach, including secrets you haven't found, and is evaluated on each call — the propagation takes minutes, which is faster than any token expiry. Azure Policy deny only blocks creating or changing resources through ARM; denyAction blocks deletes; neither touches data-plane reads or Entra. Deployment Stacks' denySettings protect only the stack's own resources and have excludedPrincipals for the IR identity. Build the denyAction definition in peacetime."
+    how: null
+    body: |-
+      az role assignment list --assignee <objectId> --all --include-inherited -o table
+      az role assignment delete --assignee <objectId> --scope <scope>          # repeat per scope; management groups included
+      az policy assignment create -n ir-deny-delete --scope /subscriptions/<sub-id> --policy <denyAction-definition-id>   # effect denyAction, actionNames [delete]
+    attack: []
+  - platform: "Azure"
+    label: "T+15–30 · Revoke"
+    name: "Disable the service principal and delete every credential it has — on the SP and on the app"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a disabled principal gets no new tokens, but tokens already issued stay valid until they expire (60–90 minutes by default; service-principal tokens are not re-evaluated), which is why the role strip above comes first. az ad app credential only removes credentials on the app registration; secrets added directly to the service principal object and federated credentials need their own commands, and an attacker who added a federated credential needs no secret at all."
+    how: null
+    body: |-
+      Update-MgServicePrincipal -ServicePrincipalId <sp-objectId> -AccountEnabled:$false
+      az ad sp credential list --id <sp-objectId> -o table
+      az ad sp credential delete --id <sp-objectId> --key-id <keyId>              # add --cert for certificate credentials
+      az ad app credential list --id <appId> -o table
+      az ad app credential delete --id <appId> --key-id <keyId>
+      az ad app federated-credential list --id <appId> -o table
+      az ad app federated-credential delete --id <appId> --federated-credential-id <id>
+    attack: []
+  - platform: "Azure"
+    label: "T+15–30 · Revoke"
+    name: "Disable the user and revoke their sessions — access tokens outlive both"
+    tier: "destructive"
+    tier_inferred: false
+    why: "disabling stops new sign-ins; Revoke-MgUserSignInSession invalidates the refresh tokens and sessions already issued. Access tokens already in hand stay valid until they expire, 60–90 minutes by default: Exchange, SharePoint, Teams and Graph enforce the revocation within minutes through continuous access evaluation, Azure Resource Manager does not, so the role strip is what actually ends the attacker's ARM access. Reset the password as well; a password change alone revokes nothing."
+    how: null
+    body: |-
+      Update-MgUser -UserId <upn> -AccountEnabled:$false
+      Revoke-MgUserSignInSession -UserId <upn>
+      az role assignment list --assignee <upn> --all --include-inherited -o table      # then delete, as in Quarantine
+    attack: []
+  - platform: "Azure"
+    label: "T+15–30 · Revoke"
+    name: "Compromised managed identity: nothing to rotate, so take its roles and its federated credentials"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a managed identity has no secret you can reset, its tokens are cached by the platform for around 24 hours, and there is no way to force a refresh. Role assignments are evaluated on every call, so removing them is the revoke. A system-assigned identity can simply be removed from the VM, which deletes it; a user-assigned one may carry federated credentials the attacker added."
+    how: null
+    body: |-
+      az role assignment list --assignee <mi-principalId> --all --include-inherited -o table
+      az role assignment delete --assignee <mi-principalId> --scope <scope>
+      az vm identity remove -g <rg> -n <vm>                                     # system-assigned: the identity is deleted outright
+      az identity federated-credential list -g <rg> --identity-name <uai> -o table
+      az identity federated-credential delete -g <rg> --identity-name <uai> -n <fic-name>
+    attack: []
+  - platform: "Azure"
+    label: "T+15–30 · Revoke"
+    name: "Invalidate storage keys and user-delegation SAS"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a listed account key gives full data access and signs SAS tokens you cannot see; rotating both keys kills every account-key SAS at once, and revoking the delegation keys kills every user-delegation SAS. Anything that legitimately used the old keys breaks at the same moment — have the list ready."
+    how: null
+    body: |-
+      az storage account keys renew -g <rg> -n <account> --key primary
+      az storage account keys renew -g <rg> -n <account> --key secondary
+      az storage account revoke-delegation-keys -g <rg> -n <account>
+    attack: []
+  - platform: "Azure"
+    label: "T+30–60 · Isolate"
+    name: "Memory, then snapshot, then cut the VM's network — don't delete it"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Run Command executes as root or SYSTEM over the VM agent, so take memory first with AVML staged in the evidence container and uploaded straight back to it with a write-only SAS. The snapshot keeps the disk; grant-access gives a read SAS to copy it into the evidence subscription. NSG rule changes apply to new connections only — existing flows are not re-evaluated — so a deny-all outbound rule does not cut a live C2 session; a route table with next hop None on 0.0.0.0/0 on the subnet does, for every VM in that subnet. Never deallocate: it discards memory."
+    how: null
+    body: |-
+      # 1. memory (Windows: --command-id RunPowerShellScript with a memory tool staged the same way)
+      az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts \
+        'curl -sSf -o /tmp/avml "<evidence-container-sas-url>/tools/avml" && chmod +x /tmp/avml && /tmp/avml --compress /tmp/mem.lime.compressed && sha256sum /tmp/mem.lime.compressed && curl -sSf -X PUT -H "x-ms-blob-type: BlockBlob" --upload-file /tmp/mem.lime.compressed "<evidence-container-sas-url>/<case>/<vm>.lime.compressed"'
+      # 2. disk
+      az snapshot create -g <rg> -n ir-<case>-<vm>-osdisk --source <os-disk-id>
+      az snapshot grant-access -g <rg> -n ir-<case>-<vm>-osdisk --duration-in-seconds 3600 --access-level Read --query accessSas -o tsv   # then azcopy it into the evidence container
+      az resource lock create --lock-type CanNotDelete -n ir-<case> --resource <vm-id>
+      # 3. isolate
+      az network nsg rule create -g <rg> --nsg-name <nsg> -n ir-deny-out --priority 100 --direction Outbound --access Deny \
+        --protocol '*' --destination-address-prefixes '*' --destination-port-ranges '*'
+      az network route-table create -g <rg> -n ir-blackhole && \
+        az network route-table route create -g <rg> --route-table-name ir-blackhole -n all --address-prefix 0.0.0.0/0 --next-hop-type None && \
+        az network vnet subnet update -g <rg> --vnet-name <vnet> -n <subnet> --route-table ir-blackhole      # cuts existing flows; whole subnet
+    attack: []
+  - platform: "GCP"
+    label: "T+0–15 · Preserve"
+    name: "Dump the T0 IAM state and copy the log buckets before you change anything"
+    tier: "write"
+    tier_inferred: false
+    why: "search-all-iam-policies is every binding in the organisation in one call and is what you are about to rewrite; get-history gives the policy as it was at any time in the last 35 days without depending on logs. gcloud logging copy moves a whole log bucket to Cloud Storage, which matters because _Default — Data Access and flow logs — keeps 30 days. The hash list is the chain of custody."
+    how: null
+    body: |-
+      gcloud asset search-all-iam-policies --scope=organizations/<org-id> --format=json > t0-iam-bindings.json
+      gcloud asset export --organization=<org-id> --content-type=resource --output-path=gs://<evidence-bucket>/<case>/t0-resources.json
+      gcloud asset get-history --project=<project-id> --asset-names=//cloudresourcemanager.googleapis.com/projects/<project-id> \
+        --content-type=iam-policy --start-time=<window-start> --format=json > t0-iam-history-<project-id>.json
+      for sa in $(gcloud iam service-accounts list --project=<project-id> --format='value(email)'); do
+        gcloud iam service-accounts keys list --iam-account="$sa" --format='csv(name,validAfterTime,disabled,keyType)' | sed "s/^/$sa,/"
+      done > t0-sa-keys-<project-id>.csv
+      gcloud logging copy _Default gs://<evidence-bucket>/<case>/logs-<project-id> --location=global --project=<project-id>
+      sha256sum t0-* | tee t0-SHA256SUMS && gcloud storage cp t0-* gs://<evidence-bucket>/<case>/t0/     # bucket with retention lock, in the evidence project
+    attack: []
+  - platform: "GCP"
+    label: "T+15–30 · Quarantine"
+    name: "Deny policy on the project — or replace the project's IAM policy with IR-only"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a deny policy is evaluated before any allow, applies to the principals it names ( principalSet://goog/public:all for everyone) with exceptionPrincipals for the IR identities, and takes effect for tokens already minted. Two limits: it only covers the permissions on Google's supported list, so a service outside it is not cut, and it does nothing at the organisation or folder level above its attachment point. When the deny list is in doubt, the blunt cut is set-iam-policy with a policy that grants only the IR group — the T0 dump is the file you restore from."
+    how: null
+    body: |-
+      gcloud iam policies create ir-quarantine --kind=denypolicies \
+        --attachment-point=cloudresourcemanager.googleapis.com%2Fprojects%2F<project-id> \
+        --policy-file=deny-all-except-ir.json
+      # or: IR-only allow policy (gcloud projects get-iam-policy <project-id> > t0-project-policy.json first)
+      gcloud projects set-iam-policy <project-id> ir-only-policy.json
+    attack: []
+  - platform: "GCP"
+    label: "T+15–30 · Revoke"
+    name: "Disable the service account — its existing tokens are rejected — then its keys"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Google's IAM API reference states that disabling a service account rejects its existing access tokens and refuses new ones; nothing says that for a disabled key alone, so treat tokens minted from a key as live for up to an hour until the account is disabled. Disabling the account also stops the keys you missed and any impersonation chain that ends in it. Compute instances using the account lose access the same moment — have the list."
+    how: null
+    body: |-
+      gcloud iam service-accounts disable <sa-email> --project=<project-id>
+      gcloud iam service-accounts keys list --iam-account=<sa-email> --managed-by=user
+      gcloud iam service-accounts keys disable <key-id> --iam-account=<sa-email>     # keep, don't delete: the key id is evidence
+      gcloud compute instances list --project=<project-id> --filter="serviceAccounts.email=<sa-email>" --format='table(name,zone.basename())'
+    attack: []
+  - platform: "GCP"
+    label: "T+15–30 · Revoke"
+    name: "Compromised user: sign out, reset, and strip roles/owner"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a Google account's sessions and OAuth tokens are revoked from Cloud Identity or Workspace, not from gcloud: the Admin console's Sign out (Directory API users.signOut ) invalidates them, a password reset alone does not. Owner at project level survives nothing you do in the console, so remove it explicitly, and check the organisation for roles the user granted themselves."
+    how: null
+    body: |-
+      # Admin console: Users > <user> > Security > Sign out; or Directory API users.signOut, then reset the password and re-enrol 2SV
+      gcloud asset search-all-iam-policies --scope=organizations/<org-id> --query='policy:user:<user-email>' --format='table(resource,policy.bindings.role)'
+      gcloud projects remove-iam-policy-binding <project-id> --member=user:<user-email> --role=roles/owner
+    attack: []
+  - platform: "GCP"
+    label: "T+30–60 · Isolate"
+    name: "Memory, then snapshot, then tag the VM into the deny-all egress rule — don't delete it"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the SSH session through IAP works while the VM still has a network path, so take memory first with AVML staged in the evidence bucket and copied straight back. The snapshot keeps the disk; deletion protection stops anyone destroying the instance. The priority-0 egress deny cuts command-and-control and exfiltration for every tagged instance, so more hosts join the cut with one tag. The VM's service account can't be detached while it runs — disable the account instead (previous step)."
+    how: null
+    body: |-
+      # 1. memory (the VM's service account needs objectCreator on the evidence bucket; write-only, retention-locked)
+      gcloud compute ssh <instance> --zone=<zone> --project=<project-id> --tunnel-through-iap --command \
+        'sudo sh -c "gcloud storage cp gs://<evidence-bucket>/tools/avml /tmp/avml && chmod +x /tmp/avml && /tmp/avml --compress /tmp/mem.lime.compressed && sha256sum /tmp/mem.lime.compressed && gcloud storage cp /tmp/mem.lime.compressed gs://<evidence-bucket>/<case>/$(hostname).lime.compressed"'
+      # 2. disk
+      gcloud compute snapshots create ir-<case>-<instance> --source-disk=<disk> --source-disk-zone=<zone> --project=<project-id>
+      gcloud compute instances update <instance> --zone=<zone> --deletion-protection
+      # 3. isolate
+      gcloud compute firewall-rules create ir-quarantine-egress --network=<vpc> --direction=EGRESS \
+        --action=DENY --rules=all --destination-ranges=0.0.0.0/0 --target-tags=ir-quarantine --priority=0
+      gcloud compute instances add-tags <instance> --zone=<zone> --tags=ir-quarantine
+    attack: []

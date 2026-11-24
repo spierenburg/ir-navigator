@@ -1,0 +1,1825 @@
+# Source of truth for this playbook's IR criteria.
+# Hand-edit freely. Re-run 'bun run build:index' after any change.
+playbook: "device-code-response"
+title: "Device Code Abuse Response"
+platforms:
+  - "Defender XDR / Sentinel"
+  - "CrowdStrike Falcon"
+  - "SentinelOne"
+  - "Velociraptor"
+  - "Splunk"
+  - "Elastic / Wazuh"
+scenarios:
+  - id: "1"
+    status: "draft"
+    source: "research@2026-10-25 https://www.volexity.com/blog/2025/02/13/multiple-russian-threat-actors-targeting-microsoft-device-code-authentication/"
+    validated_at: null
+    supersedes: null
+    name: "Device-Code Token Theft (Storm-2372, UTA0304/UTA0307; no device registered)"
+    indicators: "first sign-in with authenticationProtocol 'deviceCode'; later refreshes often have it empty but carry originalTransferMethod 'deviceCodeFlow' (interactive and non-interactive logs). Client varies: Microsoft Office, or Microsoft Teams 1fec8e78-bce4-4aaf-ab1b-5451cc387264 (UTA0307). Microsoft's hunt: a UrlClickEvents hit on microsoft.com/devicelogin from mail or Teams, then sign-ins with ErrorCode 0 and 50199 in the same session. Lures depend on live coordination because the code expires in 15 minutes: fake Teams invites, Signal or Element chats moved to a timed 'secure chat' invite. Afterwards: Graph mail searches for 'password', 'admin', 'teamviewer', 'credentials'; FileDownloaded; device-code phishing sent internally from the victim."
+    discriminator: "device-code sign-in with NO device registration near it in time — that is what separates it from scenario 2. Containment per Microsoft: revoke refresh tokens (revokeSignInSessions) and force re-authentication through Conditional Access. Hunt the victim's Sent Items for internal device-code lures: scope is wider than one user."
+    attack:
+      - "T1566.002"
+      - "T1528"
+      - "T1550.001"
+      - "T1114.002"
+    window: null
+  - id: "2"
+    status: "draft"
+    source: "research@2026-10-25 https://www.microsoft.com/en-us/security/blog/2025/02/13/storm-2372-conducts-device-code-phishing-campaign/ https://www.elastic.co/security-labs/entra-id-oauth-phishing-detection"
+    validated_at: null
+    supersedes: null
+    name: "Device Code to Device Registration and PRT (Microsoft Authentication Broker)"
+    indicators: "device-code sign-in to the Microsoft Authentication Broker (29d9ed98-a469-4536-ade2-f981bc1d605e per Elastic; Microsoft names the client but not the id); its refresh token redeemed for the Device Registration Service (resource 01cb2876-7ebd-4aa4-9cc9-d28bd4d359a9, scope adrs_access); a new Entra device for the user (CloudAppEvents AccountDisplayName 'Device Registration Service') within about 10 minutes; then PRT sign-ins from that device with trust type 'Azure AD joined', through a proxy geolocated near the victim. Elastic names ROADtx as the tooling."
+    discriminator: "a device registration for the user minutes after the device-code sign-in, and DeviceId populated on subsequent sign-ins. Revoking sessions is the sourced step. Disabling and deleting the rogue device so its PRT dies is the obvious next step but no fetched source states it — confirm in a test tenant before relying on it."
+    attack:
+      - "T1566.002"
+      - "T1528"
+      - "T1098.005"
+      - "T1550.001"
+    window: null
+  - id: "3"
+    status: "draft"
+    source: "research@2026-10-25 https://www.microsoft.com/en-us/security/blog/2026/04/06/ai-enabled-device-code-phishing-campaign/ https://www.proofpoint.com/us/blog/threat-insight/access-granted-phishing-device-code-authorization-account-takeover"
+    validated_at: null
+    supersedes: null
+    name: "Phishing-Kit Device Code (EvilTokens, TA2723; volume, BEC-oriented)"
+    indicators: "the code is generated on click, so the gap between click and device-code sign-in is short; polling and sign-in from short-lived Railway, Cloudflare or DigitalOcean nodes; lures on compromised legitimate sites, generic and business-themed (RFP, invoice, DocuSign, salary amendment); the landing page asks for the email to 'generate an OTP'. Afterwards: device registration and PRT within 10 minutes in some cases, or hours later inbox rules via the Microsoft Office client, Graph reconnaissance and mail exfiltration from finance or executive mailboxes."
+    discriminator: "the sign-in comes from hosting or PaaS infrastructure rather than a proxy near the victim, the lure is generic rather than a built rapport, and other tenants are hit the same day. Scope per victim: some reach scenario 2 (device registered), so check for a device. Inbox rules mean BEC follow-up: run the bec-response checks and payment-fraud recall."
+    attack:
+      - "T1566.002"
+      - "T1528"
+      - "T1564.008"
+      - "T1098.005"
+    window: null
+  - id: "4"
+    status: "draft"
+    source: "research@2026-10-25 https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-authentication-flows"
+    validated_at: null
+    supersedes: null
+    name: "Legitimate Device-Code Use (shared devices, meeting rooms)"
+    indicators: "device-code sign-ins from an expected client and platform (Microsoft's worked example: Android meeting-room devices) from a named location, with a stable history for the account. Volexity found most tenants had no legitimate device-code use at all."
+    discriminator: "a baseline: the same client, platform and location seen before. A user's first-ever device-code sign-in from an unfamiliar IP is not this reading. The Outlook desktop-to-mobile QR flow is 'authentication transfer', a separate Conditional Access flow, not device code."
+    attack: []
+    window: null
+criteria:
+  - id: "device-code-response/defender/s1-lure-delivery-and-clicks-mail"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Lure delivery and clicks (mail)"
+    why: "The lure links to Microsoft's own sign-in page, so URL reputation never fires; the signal is a devicelogin or deviceauth URL arriving by mail at all. Every recipient is a candidate for stage 2, clicked or not, because the code can be typed from the message body."
+    how: null
+    fp: "IT and developer teams mail each other devicelogin links for Azure CLI and VS Code set-up. Keep hits from external senders, newly registered domains and mail that also carries a nine-character code in the body; drop internal sender-to-self mail."
+    query: |-
+      let lure = dynamic(["microsoft.com/devicelogin", "oauth2/deviceauth", "/oauth2/v2.0/devicecode"]);
+      EmailUrlInfo
+      | where Timestamp > ago(30d) and Url has_any (lure)
+      | join kind=inner (EmailEvents
+          | project NetworkMessageId, RecipientEmailAddress, SenderFromAddress, SenderMailFromDomain, Subject, DeliveryAction)
+          on NetworkMessageId
+      | join kind=leftouter (UrlClickEvents
+          | where Timestamp > ago(30d)
+          | project NetworkMessageId, ClickTime = Timestamp, ClickedBy = AccountUpn, ActionType)
+          on NetworkMessageId
+      | project Timestamp, RecipientEmailAddress, SenderFromAddress, SenderMailFromDomain, Subject, Url, DeliveryAction, ClickTime, ClickedBy, ActionType
+      | order by Timestamp asc
+    tested: null
+    attack:
+      - "T1566.002"
+  - id: "device-code-response/defender/s1-lure-delivery-in-teams-external-chats"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Lure delivery in Teams external chats"
+    why: "Storm-2372 and its copycats send the lure as a Teams invitation from a look-alike tenant; the mail hunt never sees it. MessageEvents and MessageUrlInfo need Defender for Office 365 Teams protection enabled."
+    how: null
+    fp: "Federated partners and MSPs legitimately share Azure CLI instructions in external chats; compare the sender tenant with your allowed federation list before you treat it as a lure."
+    query: |-
+      MessageEvents
+      | where Timestamp > ago(30d) and IsExternalThread == true
+      | join kind=inner (MessageUrlInfo
+          | where Url has_any ("devicelogin", "deviceauth", "devicecode"))
+          on TeamsMessageId
+      | project Timestamp, SenderEmailAddress, SenderDisplayName, RecipientDetails, ThreadType, Url
+      | order by Timestamp asc
+    tested: null
+    attack:
+      - "T1566.003"
+  - id: "device-code-response/defender/s1-device-code-attempts-that-did-not-complete-reach"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Device-code attempts that did not complete (reach of the lure)"
+    why: "A code that expired before it was entered, or a user the Conditional Access block caught, still shows the lure reached them. These rows are the campaign's target list beyond the successes in stage 2; each user on it gets a check for a second attempt."
+    how: null
+    fp: "After step 7 is live, every legitimate Azure CLI and kubelogin user produces 53003 rows; filter the exception group's apps out and read the rest as reach."
+    query: |-
+      SigninLogs
+      | where TimeGenerated > ago(30d)
+      | where AuthenticationProtocol =~ "deviceCode" and ResultType != "0"
+      | summarize Attempts = count(), First = min(TimeGenerated), Last = max(TimeGenerated),
+                  Codes = make_set(ResultType), Reasons = make_set(ResultDescription, 5)
+          by UserPrincipalName, AppDisplayName, AppId
+      | order by First asc
+      // 53003 = blocked by Conditional Access (the step 7 policy working); 50058 = code entered without a
+      // completed sign-in; 70016/70020 = the client polled past the code's lifetime.
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/defender/s2-successful-device-code-sign-ins"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Code entered"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Successful device-code sign-ins"
+    why: "Every user on this list may have handed over tokens: this is the containment scope. The IP on these events is the victim's browser, not the attacker's; the polling client's user agent (often python-requests or a bare Go client) is the first attacker artefact."
+    how: null
+    fp: "Azure CLI on a headless host, kubelogin, Arc onboarding, Teams Rooms and printers sign in with device code every day. Build the exception list from 30 days of these rows by AppId and user, then treat anything outside it, or any new AppId for a known user, as a hit."
+    query: |-
+      SigninLogs
+      | where TimeGenerated > ago(30d)
+      | where AuthenticationProtocol =~ "deviceCode" and ResultType == "0"
+      | project TimeGenerated, UserPrincipalName, AppDisplayName, AppId, ResourceDisplayName,
+                IPAddress, AutonomousSystemNumber, UserAgent, SessionId, UniqueTokenIdentifier, CorrelationId
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/defender/s3-token-use-from-another-ip-after-the-device-code"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Token use"
+    stage_ord: 3
+    platform: "Defender XDR / Sentinel"
+    title: "Token use from another IP after the device-code sign-in, including FOCI app switches"
+    why: "The IP that redeems and refreshes the tokens is the attacker's: it is the indicator for every later hunt and for the tenant-wide spread search. The refresh token is family-scoped (FOCI), so the attacker swaps it to Office, Azure CLI, Azure PowerShell, the Authentication Broker, VS Code or Teams and the non-interactive rows carry a different AppId. Join on the user, not the app. CAE-capable tokens can run 24 hours before the first refresh, so the window is 48 hours, not six."
+    how: null
+    fp: "The user's own phone moving from Wi-Fi to cellular, a VPN reconnect and Microsoft service IPs all show as a second IP within minutes, usually on the same SessionId and a mobile ASN. Rank by ASN (hosting, VPS and residential-proxy ranges first) and by apps the user never used before, not by count."
+    query: |-
+      let foci = dynamic(["d3590ed6-52b3-4102-aeff-aad2292ab01c",   // Microsoft Office
+                          "04b07795-8ddb-461a-bbee-02f9e1bf7b46",   // Azure CLI
+                          "1950a258-227b-4e31-a9cf-717495945fc2",   // Azure PowerShell
+                          "29d9ed98-a469-4536-ade2-f981bc1d605e",   // Microsoft Authentication Broker
+                          "aebc6443-996d-45c2-90f0-388ff96faa56",   // Visual Studio Code
+                          "1fec8e78-bce4-4aaf-ab1b-5451cc387264"]); // Microsoft Teams
+      let dc = SigninLogs
+        | where TimeGenerated > ago(30d)
+        | where AuthenticationProtocol =~ "deviceCode" and ResultType == "0"
+        | project UserPrincipalName, DC_Time = TimeGenerated, DC_IP = IPAddress, DC_App = AppId, DC_Session = SessionId;
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d) and ResultType == "0"
+      | join kind=inner dc on UserPrincipalName
+      | where TimeGenerated between (DC_Time .. DC_Time + 48h) and IPAddress != DC_IP
+      | extend Family = iff(AppId in (foci), "FOCI", "other"), SameSession = SessionId == DC_Session
+      | summarize FirstUse = min(TimeGenerated), Uses = count(), Resources = make_set(ResourceDisplayName, 10),
+                  TokenTypes = make_set(IncomingTokenType), SameSession = max(SameSession)
+          by UserPrincipalName, DC_IP, AttackerIP = IPAddress, AttackerASN = AutonomousSystemNumber, AppId, AppDisplayName, Family
+      | order by UserPrincipalName asc, FirstUse asc
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/defender/s4-device-objects-registered-by-the-victim-account"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Device registration"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "Device objects registered by the victim account in the window"
+    why: "A device the attacker registers lets them request a Primary Refresh Token for silent sign-in; it has to be disabled in Entra, separately from revoking the user's sessions. Registration writes three audit activities, not one; key on all of them."
+    how: null
+    fp: "Intune autopilot and the user's own new laptop produce the same three activities; the attacker's device has no MDM enrolment, an ActorIP from the attacker ASN and a registration minutes after the device-code event."
+    query: |-
+      AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where OperationName in ("Register device", "Add device", "Add registered owner to device", "Add registered users to device")
+      | extend Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName)),
+               ActorIP = tostring(InitiatedBy.user.ipAddress),
+               Device = tostring(TargetResources[0].displayName), DeviceObjectId = tostring(TargetResources[0].id),
+               Changes = tostring(TargetResources[0].modifiedProperties)
+      | where Actor =~ "<upn>" or Changes has "<upn>"
+      | project TimeGenerated, OperationName, Result, Actor, ActorIP, Device, DeviceObjectId, Changes
+      | order by TimeGenerated asc
+      // Changes carries the OS build and trust type; a Windows 10.0.19045 build with no MDM and a hostname that
+      // does not match your naming standard is the phishing-kit default.
+    tested: null
+    attack:
+      - "T1098.005"
+  - id: "device-code-response/defender/s4-device-code-requested-directly-as-the-authentica"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Device registration"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "Device code requested directly as the Authentication Broker (PRT path)"
+    why: "Since early 2025 the kits request the code with the Microsoft Authentication Broker client (29d9ed98) for the Device Registration Service, so the stolen token registers a device and mints a PRT without any further lure (Microsoft Threat Intelligence, Storm-2372, February 2025). A deviceCode sign-in to the broker is never a normal user action."
+    how: null
+    fp: "Windows Hello for Business enrolment and a genuine Entra join also call the Device Registration Service from the broker, from the corporate network with a Windows user agent. The deviceCode protocol on the broker AppId has no legitimate source."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d)
+      | where AppId == "29d9ed98-a469-4536-ade2-f981bc1d605e"
+      | where AuthenticationProtocol =~ "deviceCode" or ResourceDisplayName == "Device Registration Service"
+      | project TimeGenerated, Type, UserPrincipalName, AuthenticationProtocol, ResourceDisplayName, ResultType,
+                IPAddress, AutonomousSystemNumber, IncomingTokenType, UserAgent, SessionId
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1098.005"
+      - "T1528"
+  - id: "device-code-response/defender/s4-prt-use-from-a-device-registered-in-the-window"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Device registration"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "PRT use from a device registered in the window"
+    why: "Once the attacker's device holds a PRT it is \"compliant enough\" for device-based Conditional Access and shows up as primaryRefreshToken sign-ins from a device id you have never seen. The PRT renews roughly every four hours, so disabling the device object is not instant: this hunt is also the check that the disable bit."
+    how: null
+    fp: "Every PRT sign-in from the user's real Entra-joined laptop lands here; compare DeviceId with the device objects from the audit hunt and with Intune's inventory, and keep the ones registered inside the window."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d) and UserPrincipalName =~ "<upn>"
+      | where IncomingTokenType == "primaryRefreshToken"
+      | extend DeviceId = tostring(DeviceDetail.deviceId), DeviceName = tostring(DeviceDetail.displayName),
+               OS = tostring(DeviceDetail.operatingSystem), TrustType = tostring(DeviceDetail.trustType),
+               IsCompliant = tostring(DeviceDetail.isCompliant), IsManaged = tostring(DeviceDetail.isManaged)
+      | summarize First = min(TimeGenerated), Last = max(TimeGenerated), SignIns = count(), Apps = make_set(AppDisplayName, 10)
+          by DeviceId, DeviceName, OS, TrustType, IsCompliant, IsManaged, IPAddress, AutonomousSystemNumber
+      | order by First asc
+    tested: null
+    attack:
+      - "T1098.005"
+      - "T1550.001"
+  - id: "device-code-response/defender/s5-consent-permission-grants-and-service-principal"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Consent"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "Consent, permission grants and service-principal changes by the victim account"
+    why: "A consented app keeps its own access to mail and files after the user's sessions are revoked. A refresh token alone does not get the attacker there: a user without an admin role cannot create a permission grant through Graph, so consent usually needs a second, consent-phishing lure, or the tenant allows user consent and the attacker drives the prompt with the stolen session. The same query answers step 11: roles added, credentials added to an existing service principal, new service principals."
+    how: null
+    fp: "Admin consent by your own identity team and \"Add delegated permission grant\" for Microsoft first-party apps fire constantly; keep rows where the actor is the victim, the ActorIP is in the attacker ASN, or the target app has no verified publisher."
+    query: |-
+      AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where OperationName in ("Consent to application", "Add delegated permission grant", "Add app role assignment grant to user",
+                                "Add service principal", "Add service principal credentials", "Add member to role",
+                                "Add eligible member to role")
+          or OperationName has "Certificates and secrets management"
+      | extend Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName)),
+               ActorIP = tostring(InitiatedBy.user.ipAddress),
+               Target = tostring(TargetResources[0].displayName), TargetId = tostring(TargetResources[0].id),
+               Changes = tostring(TargetResources[0].modifiedProperties)
+      | where Actor =~ "<upn>" or Changes has "<upn>"
+      | project TimeGenerated, OperationName, Result, Actor, ActorIP, Target, TargetId, Changes
+      | order by TimeGenerated asc
+      // ConsentAction.Permissions inside Changes lists the scopes; offline_access plus Mail.Read or Files.Read.All
+      // from an unverified publisher is the pattern.
+    tested: null
+    attack:
+      - "T1528"
+      - "T1098.001"
+  - id: "device-code-response/defender/s6-mail-file-search-and-teams-reads-by-the-victim-a"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Data access"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "Mail, file, search and Teams reads by the victim account, by client and source IP"
+    why: "Access from the attacker's IP is the evidence legal and privacy need to decide whether this is a notifiable breach. MailItemsAccessed is in Audit Standard since late 2023, so every tenant has it; SearchQueryInitiated and the Teams read operations still need Audit Premium. The client columns separate the attacker's Graph or EWS tooling from Outlook."
+    how: null
+    fp: "The owner's own clients dominate MailItemsAccessed; split by ClientIP and ClientApp first. Outlook in cached mode and mobile mail legitimately show Sync. Exchange stops writing MailItemsAccessed for 24 hours after 1,000 records from one mailbox (IsThrottled = True), so a throttled row means \"more than you can see\", and the user's own full-mailbox search trips the same throttle."
+    query: |-
+      OfficeActivity
+      | where TimeGenerated > ago(30d) and UserId =~ "<upn>"
+      | where Operation in ("MailItemsAccessed", "FileDownloaded", "FileAccessed", "FileSyncDownloadedFull",
+                            "SearchQueryInitiatedExchange", "SearchQueryInitiatedSharePoint",
+                            "MessagesListed", "ChatRetrieved", "MessageRead")
+      | extend Props = tostring(OperationProperties),
+               ClientApp = coalesce(ClientAppId, AppId, ClientInfoString)
+      | extend AccessType = extract(@'"Name":"MailAccessType","Value":"(\w+)"', 1, Props),
+               Throttled = Props contains '"Name":"IsThrottled","Value":"True"'
+      | summarize Events = count(), First = min(TimeGenerated), Last = max(TimeGenerated),
+                  Folders = make_set(Folders, 10)
+          by OfficeWorkload, Operation, ClientIP, ClientApp, AccessType, Throttled
+      | order by First asc
+      // ClientIP on Exchange rows can be "[ip]:port"; Client_IPAddress is the bare form.
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1213.002"
+  - id: "device-code-response/defender/s6-graph-api-calls-made-with-the-stolen-tokens"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Data access"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "Graph API calls made with the stolen tokens"
+    why: "Attacker tooling reads mail and files through Microsoft Graph; those calls never appear in sign-in logs once the access token is issued. SignInActivityId equals the UniqueTokenIdentifier of the sign-in that minted the token, so you can list exactly what each stolen token was used for. UserId here is the object id, not the UPN."
+    how: null
+    fp: "Nothing legitimate shares a token id with an attacker sign-in; the only noise is Microsoft's own first-party calls on the IP filter when the \"attacker\" IP turns out to be a shared egress. Confirm the ASN before you pivot on IP alone."
+    query: |-
+      let tokens = union SigninLogs, AADNonInteractiveUserSignInLogs
+        | where TimeGenerated > ago(30d) and UserPrincipalName =~ "<upn>"
+        | where IPAddress in ("<attacker ip>") or AutonomousSystemNumber in (<attacker asn>)
+        | distinct UniqueTokenIdentifier;
+      MicrosoftGraphActivityLogs
+      | where TimeGenerated > ago(30d)
+      | where SignInActivityId in (tokens) or IPAddress in ("<attacker ip>")
+      | extend Path = tostring(parse_url(RequestUri).Path)
+      | summarize Calls = count(), First = min(TimeGenerated), Last = max(TimeGenerated),
+                  Status = make_set(ResponseStatusCode), Scopes = make_set(Scopes, 5)
+          by RequestMethod, Path, AppId, IPAddress, UserAgent
+      | order by First asc
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1213.002"
+      - "T1550.001"
+  - id: "device-code-response/defender/s7-mail-sent-from-the-account-defender-for-office-3"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Outbound"
+    stage_ord: 7
+    platform: "Defender XDR / Sentinel"
+    title: "Mail sent from the account (Defender for Office 365)"
+    why: "Lateral phishing from the compromised mailbox is the most common follow-on. Recipient count per hour and the subject set show whether the account became a lure sender; every internal recipient who clicked gets the same containment."
+    how: null
+    fp: "Assistants, shared mailboxes and newsletter senders mail many recipients every day; compare the recipient set and subjects with the 30 days before the window, not with zero."
+    query: |-
+      EmailEvents
+      | where Timestamp > ago(30d)
+      | where SenderFromAddress =~ "<upn>" or SenderMailFromAddress =~ "<upn>"
+      | where EmailDirection in ("Outbound", "Intra-org")
+      | summarize Messages = count(), Recipients = dcount(RecipientEmailAddress),
+                  Sample = make_set(RecipientEmailAddress, 20), Subjects = make_set(Subject, 10)
+          by bin(Timestamp, 1h), EmailDirection
+      | order by Timestamp asc
+    tested: null
+    attack:
+      - "T1534"
+  - id: "device-code-response/defender/s7-send-sendas-and-teams-messages-by-client-and-sou"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Outbound"
+    stage_ord: 7
+    platform: "Defender XDR / Sentinel"
+    title: "Send, SendAs and Teams messages by client and source IP (Unified Audit Log)"
+    why: "The audit log ties each send to the client and IP that made it, which the message trace cannot; a Send from the attacker's ASN through a Graph client is the proof, and a Teams MessageSent burst to external threads is the lure moving on. Send moved into Audit Standard with MailItemsAccessed."
+    how: null
+    fp: "Delegates with SendAs on shared mailboxes produce SendAs rows from the office egress all day; the row that matters has the attacker's ClientIP or a client string you have never seen on this mailbox."
+    query: |-
+      OfficeActivity
+      | where TimeGenerated > ago(30d) and UserId =~ "<upn>"
+      | where Operation in ("Send", "SendAs", "SendOnBehalf", "MessageSent")
+      | summarize Events = count(), First = min(TimeGenerated), Last = max(TimeGenerated), Threads = dcount(ChatThreadId)
+          by OfficeWorkload, Operation, ClientIP, ClientInfoString, CommunicationType
+      | order by First asc
+    tested: null
+    attack:
+      - "T1534"
+  - id: "device-code-response/defender/s8-other-users-successful-device-code-sign-ins-acro"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Spread"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Other users: successful device-code sign-ins across the tenant"
+    why: "Campaigns target many users at once; every account found here needs the same containment. A new AppId or a first-ever device-code sign-in for a user is the signal, not the sign-in itself."
+    how: null
+    fp: "Exclude the step 7 exception group's users and apps; a user whose only device-code sign-ins are Azure CLI from the corporate ASN over months is the baseline, not the campaign."
+    query: |-
+      SigninLogs
+      | where TimeGenerated > ago(30d)
+      | where AuthenticationProtocol =~ "deviceCode" and ResultType == "0"
+      | summarize First = min(TimeGenerated), Last = max(TimeGenerated), SignIns = count(),
+                  Apps = make_set(AppDisplayName), ASNs = make_set(AutonomousSystemNumber), Agents = make_set(UserAgent, 5)
+          by UserPrincipalName
+      | order by First asc
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/defender/s8-anyone-else-seen-from-the-attacker-s-asn"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Spread"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Anyone else seen from the attacker's ASN"
+    why: "Kits rotate IPs inside one hosting or residential-proxy range within days, so a single-IP search clears nobody. Pivot on the ASN from stage 3, then narrow to the IP once you have the list."
+    how: null
+    fp: "A large cloud or carrier ASN (Microsoft 8075, AWS 16509, a national mobile network) puts legitimate users behind the same number; pivot on ASN only for hosting, VPS and proxy ranges, otherwise on the /24."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d)
+      | where AutonomousSystemNumber in (<attacker asn>) or IPAddress in ("<attacker ip>")
+      | summarize Users = make_set(UserPrincipalName), First = min(TimeGenerated), Last = max(TimeGenerated),
+                  Apps = make_set(AppDisplayName, 10), Outcomes = make_set(ResultType), TokenTypes = make_set(IncomingTokenType)
+          by AutonomousSystemNumber, IPAddress
+      | order by First asc
+    tested: null
+    attack:
+      - "T1550.001"
+      - "T1078.004"
+  - id: "device-code-response/defender/s9-refused-and-successful-token-use-after-the-revoc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Defender XDR / Sentinel"
+    title: "Refused and successful token use after the revocation time"
+    why: "The account is disabled at step 2, so a \"successes after revocation\" query is empty by construction and proves nothing. The proof of containment is the attacker's refresh attempts failing: 50057 (user disabled) and 50173 (token revoked) from the attacker ASN, carrying a refreshToken or primaryRefreshToken. A ResultType \"0\" after the revocation time is a live channel, usually a device object or a consented app."
+    how: null
+    fp: "The user's own clients also fail with 50057 and 50173 after step 2, from the user's usual ASN; those rows are expected. Access tokens issued before revocation stay valid until they expire (about one hour), so a success inside that hour from a non-CAE client is not a miss; one after it is."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > datetime(<revocation time, UTC>)
+      | where AutonomousSystemNumber in (<attacker asn>) or IPAddress in ("<attacker ip>")
+            or UserPrincipalName in~ ("<upn1>", "<upn2>")
+      | where IncomingTokenType in ("refreshToken", "primaryRefreshToken") or ResultType == "0"
+      | extend Verdict = case(ResultType == "0", "LIVE: success after revocation",
+                              ResultType in ("50057", "50173", "70008", "50133", "53003"), "contained: refused",
+                              "other failure")
+      | summarize Attempts = count(), Last = max(TimeGenerated), Codes = make_set(ResultType),
+                  TokenTypes = make_set(IncomingTokenType), Apps = make_set(AppDisplayName, 10)
+          by Verdict, UserPrincipalName, IPAddress, AutonomousSystemNumber
+      | order by Verdict asc, Last desc
+      // 50057 user disabled; 50173 refresh token revoked; 70008 refresh token expired; 50133 session invalid
+      // after password change; 53003 blocked by Conditional Access.
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/defender/s9-access-token-use-that-never-reaches-the-sign-in"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Defender XDR / Sentinel"
+    title: "Access-token use that never reaches the sign-in logs"
+    why: "Graph calls and mailbox reads made with an access token minted before revocation show up only in MicrosoftGraphActivityLogs and OfficeActivity. Anything here more than 90 minutes after the revocation time is a channel the revocation did not cover."
+    how: null
+    fp: "The user's own Outlook and OneDrive clients keep calling with their cached access token for up to an hour after revocation, then fail; a 401 or 403 in Status is the revocation working, a 200 after the hour is not."
+    query: |-
+      union
+        (MicrosoftGraphActivityLogs
+          | where TimeGenerated > datetime(<revocation time, UTC>)
+          | where IPAddress in ("<attacker ip>") or UserId in ("<user object id>")
+          | project TimeGenerated, Source = "Graph", Who = UserId,
+                    What = strcat(RequestMethod, " ", tostring(parse_url(RequestUri).Path)),
+                    Status = tostring(ResponseStatusCode), IPAddress),
+        (OfficeActivity
+          | where TimeGenerated > datetime(<revocation time, UTC>)
+          | where UserId in~ ("<upn1>", "<upn2>") or ClientIP has_any ("<attacker ip>")
+          | project TimeGenerated, Source = OfficeWorkload, Who = UserId, What = Operation,
+                    Status = ResultStatus, IPAddress = ClientIP)
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/crowdstrike/s1-device-code-attempts-that-did-not-complete-reach"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "CrowdStrike Falcon"
+    title: "Device-code attempts that did not complete (reach of the lure)"
+    why: "No mail telemetry in the Entra repo, and the lure URL is Microsoft's own, so the lure's reach is measured from the sign-in side: codes that expired or were blocked show which users the campaign got to, beyond the successes in stage 2."
+    how: null
+    fp: "After the step 7 block, legitimate Azure CLI and kubelogin users produce 53003 rows; drop the exception group's apps and read the remainder as reach."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.authenticationProtocol=deviceCode
+      | Vendor.properties.status.errorCode!=0
+      | groupBy([Vendor.properties.userPrincipalName, Vendor.properties.appDisplayName, Vendor.properties.status.errorCode], function=[count(), min(@timestamp), max(@timestamp)])
+      // 53003 = blocked by Conditional Access, 50058 = code entered without a completed sign-in.
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/crowdstrike/s2-successful-device-code-sign-ins"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Code entered"
+    stage_ord: 2
+    platform: "CrowdStrike Falcon"
+    title: "Successful device-code sign-ins"
+    why: "Every user on this list may have handed over tokens: this is the containment scope. The IP on these events is the victim's browser, not the attacker's."
+    how: null
+    fp: "Azure CLI on headless hosts, kubelogin, Arc onboarding, Teams Rooms and printers use device code daily; baseline 30 days by appId and user, then treat a new app for a known user as a hit."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.authenticationProtocol=deviceCode
+      | Vendor.properties.status.errorCode=0
+      | groupBy([Vendor.properties.userPrincipalName, Vendor.properties.appDisplayName, Vendor.properties.appId, Vendor.properties.ipAddress, Vendor.properties.userAgent], function=[count(), min(@timestamp)])
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/crowdstrike/s3-token-use-from-another-ip-after-the-device-code"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Token use"
+    stage_ord: 3
+    platform: "CrowdStrike Falcon"
+    title: "Token use from another IP after the device-code sign-in, including FOCI app switches"
+    why: "The IP that redeems and refreshes the tokens is the attacker's. The refresh token is family-scoped, so the attacker's later rows carry another family AppId (Office d3590ed6, Azure CLI 04b07795, Azure PowerShell 1950a258, Broker 29d9ed98, VS Code aebc6443, Teams 1fec8e78): group on the user and read every app, not only the one from stage 2. Give it 48 hours; CAE-capable tokens refresh late."
+    how: null
+    fp: "The user's own phone switching networks and VPN reconnects show as a second IP within minutes on a mobile or corporate ASN; rank hosting, VPS and proxy ASNs first."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.userPrincipalName="<upn>"
+      | Vendor.properties.status.errorCode=0
+      | groupBy([Vendor.properties.ipAddress, Vendor.properties.autonomousSystemNumber, Vendor.properties.appId, Vendor.properties.appDisplayName, Vendor.properties.incomingTokenType], function=[count(), min(@timestamp), max(@timestamp)])
+      | sort(min(@timestamp))
+      // The device-code event carries the victim's IP; the next IP, on a different ASN, is the attacker's.
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/crowdstrike/s4-device-registered-by-the-victim-account-and-the"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Device registration"
+    stage_ord: 4
+    platform: "CrowdStrike Falcon"
+    title: "Device registered by the victim account, and the broker-client device-code variant"
+    why: "A device the attacker registers lets them request a Primary Refresh Token for silent sign-in; it has to be disabled in Entra, separately from revoking the user's sessions. Since early 2025 the kits request the code as the Microsoft Authentication Broker, which goes straight to a device and a PRT."
+    how: null
+    fp: "Genuine Entra joins and Windows Hello enrolment also hit the Device Registration Service from the broker, from the corporate network; the deviceCode protocol on the broker AppId has no legitimate source."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.userPrincipalName="<upn>" OR Vendor.properties.targetResources[0].userPrincipalName="<upn>"
+      | Vendor.operationName=/^(Register device|Add device|Add registered owner to device)$/
+      // The broker-client variant, all users:
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.authenticationProtocol=deviceCode
+      | Vendor.properties.appId="29d9ed98-a469-4536-ade2-f981bc1d605e"
+      // Then PRT sign-ins from the new device id: Vendor.properties.incomingTokenType=primaryRefreshToken
+      // grouped by Vendor.properties.deviceDetail.deviceId. CrowdStrike ships correlation rule templates for
+      // this chain in Next-Gen SIEM.
+    tested: null
+    attack:
+      - "T1098.005"
+  - id: "device-code-response/crowdstrike/s5-consent-permission-grants-and-service-principal"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Consent"
+    stage_ord: 5
+    platform: "CrowdStrike Falcon"
+    title: "Consent, permission grants and service-principal changes by the victim account"
+    why: "A consented app keeps its own access to mail and files after the user's sessions are revoked. A refresh token alone cannot create a grant through Graph for a non-admin user; consent usually needs a second lure, so an empty result here is normal. The same search answers step 11."
+    how: null
+    fp: "Admin consent by your identity team and first-party permission grants fire constantly; keep rows where the actor is the victim or the source IP is in the attacker ASN."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.operationName=/^(Consent to application|Add delegated permission grant|Add service principal|Add service principal credentials|Add member to role)$/
+      | "<upn>"
+      // Free text on the UPN catches both the actor and the target; read the app and the permissions from the
+      // parsed targetResources.
+    tested: null
+    attack:
+      - "T1528"
+      - "T1098.001"
+  - id: "device-code-response/crowdstrike/s6-mail-and-file-access-by-the-victim-account-by-so"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Data access"
+    stage_ord: 6
+    platform: "CrowdStrike Falcon"
+    title: "Mail and file access by the victim account, by source IP"
+    why: "Access from the attacker's IP is the evidence legal and privacy need to decide whether this is a notifiable breach. MailItemsAccessed is in Audit Standard since late 2023, so every tenant has it."
+    how: null
+    fp: "The owner's own Outlook dominates MailItemsAccessed; split by client IP first. Exchange throttles MailItemsAccessed for 24 hours after 1,000 records (IsThrottled), so a throttled row means more than you can see."
+    query: |-
+      // Microsoft 365 audit data lands in the Microsoft 365 connector's own repo; field names depend on that
+      // parser. Search it as free text, then read ClientIP, ClientAppId and MailAccessType per event:
+      "<upn>" "MailItemsAccessed"
+      "<upn>" "FileDownloaded"
+      "<upn>" "SearchQueryInitiatedExchange"
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1213.002"
+  - id: "device-code-response/crowdstrike/s7-mail-and-teams-messages-sent-from-the-account"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Outbound"
+    stage_ord: 7
+    platform: "CrowdStrike Falcon"
+    title: "Mail and Teams messages sent from the account"
+    why: "Lateral phishing from the compromised mailbox is the most common follow-on; the Send audit row carries the client and IP that made it. Send moved into Audit Standard with MailItemsAccessed."
+    how: null
+    fp: "Delegates with SendAs on shared mailboxes send all day from the office egress; the row that matters has the attacker's client IP or an unfamiliar client string."
+    query: |-
+      // Microsoft 365 connector repo, free text:
+      "<upn>" "Send"
+      "<upn>" "SendAs"
+      "<upn>" "MessageSent"
+      // Group on the client IP field once you have confirmed its name; a send from the attacker ASN is the proof.
+    tested: null
+    attack:
+      - "T1534"
+  - id: "device-code-response/crowdstrike/s8-other-users-device-code-sign-ins-across-the-tena"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Spread"
+    stage_ord: 8
+    platform: "CrowdStrike Falcon"
+    title: "Other users: device-code sign-ins across the tenant, and anyone from the attacker ASN"
+    why: "Campaigns target many users at once; every account found here needs the same containment. Pivot on the ASN, not the IP: kits rotate addresses inside one range within days."
+    how: null
+    fp: "Exclude the step 7 exception group. A carrier or large cloud ASN puts legitimate users behind the same number; pivot on ASN only for hosting, VPS and proxy ranges."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.authenticationProtocol=deviceCode
+      | Vendor.properties.status.errorCode=0
+      | groupBy([Vendor.properties.userPrincipalName], function=[count(), min(@timestamp), collect([Vendor.properties.appDisplayName])])
+      // Anyone else from the attacker's ASN, 30 days:
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.autonomousSystemNumber=<attacker asn>
+      | groupBy([Vendor.properties.ipAddress], function=[collect([Vendor.properties.userPrincipalName]), min(@timestamp)])
+    tested: null
+    attack:
+      - "T1528"
+      - "T1550.001"
+  - id: "device-code-response/crowdstrike/s9-refused-and-successful-token-use-after-the-revoc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "CrowdStrike Falcon"
+    title: "Refused and successful token use after the revocation time"
+    why: "The account is disabled at step 2, so a successes-only search is empty by construction. Proof of containment is the attacker's refreshes failing with 50057 (disabled) or 50173 (revoked) from their ASN; any errorCode 0 after the revocation time is a live channel."
+    how: null
+    fp: "The user's own clients also fail with 50057 and 50173 from the user's usual ASN; expected. A success inside the first hour from a non-CAE client is a pre-revocation access token, not a miss."
+    query: |-
+      #repo="3pi_microsoft_entra_id"
+      | Vendor.properties.autonomousSystemNumber=<attacker asn> OR Vendor.properties.userPrincipalName="<upn>"
+      | Vendor.properties.incomingTokenType=/^(refreshToken|primaryRefreshToken)$/ OR Vendor.properties.status.errorCode=0
+      | groupBy([Vendor.properties.userPrincipalName, Vendor.properties.ipAddress, Vendor.properties.status.errorCode, Vendor.properties.incomingTokenType], function=[count(), max(@timestamp)])
+      // Set the time range to start at the revocation time. errorCode 0 = live; 50057/50173 = refused.
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/sentinelone/s1-device-code-attempts-that-did-not-complete-reach"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "SentinelOne"
+    title: "Device-code attempts that did not complete (reach of the lure)"
+    why: "No mail telemetry in the Data Lake unless a gateway feed is ingested, and the lure URL is Microsoft's own; the lure's reach is measured from the sign-in side. Codes that expired or were blocked (errorCode 53003) show who the campaign got to beyond the successes in stage 2."
+    how: null
+    fp: "After the step 7 block every legitimate device-code user produces 53003; drop the exception group's apps."
+    query: |-
+      dataSource.name = '<entra_signin_source>' AND * contains 'deviceCode' AND NOT * contains '"errorCode":0'
+      | group Events = count() by <user_field>, <error_code_field>
+      // Discover <error_code_field> first: ... | limit 1 | columns *
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/sentinelone/s2-successful-device-code-sign-ins"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Code entered"
+    stage_ord: 2
+    platform: "SentinelOne"
+    title: "Successful device-code sign-ins"
+    why: "Every user on this list may have handed over tokens: this is the containment scope. The IP on these events is the victim's browser, not the attacker's."
+    how: null
+    fp: "Azure CLI on headless hosts, kubelogin, Teams Rooms and printers use device code daily; baseline 30 days by app and user first."
+    query: |-
+      // Discover the field names once:
+      dataSource.name = '<entra_signin_source>' AND * contains 'deviceCode'
+      | limit 1 | columns *
+      // Then, with the user, app and IP fields you found:
+      dataSource.name = '<entra_signin_source>' AND * contains 'deviceCode' AND * contains '"errorCode":0'
+      | group Events = count() by <user_field>, <app_id_field>, <ip_field>
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/sentinelone/s3-token-use-from-another-ip-after-the-device-code"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Token use"
+    stage_ord: 3
+    platform: "SentinelOne"
+    title: "Token use from another IP after the device-code sign-in, including FOCI app switches"
+    why: "The IP that redeems and refreshes the tokens is the attacker's. The refresh token is family-scoped, so later rows carry another family AppId (Office, Azure CLI, Azure PowerShell, Broker, VS Code, Teams): group on the user and read every app. Give it 48 hours."
+    how: null
+    fp: "The user's own phone and VPN reconnects show as a second IP within minutes on a mobile or corporate ASN; rank hosting, VPS and proxy ASNs first."
+    query: |-
+      dataSource.name = '<entra_signin_source>' AND * contains '<upn>'
+      | group Events = count() by <ip_field>, <asn_field>, <app_id_field>, <incoming_token_type_field>
+      // An IP that is not the one on the device-code event, starting right after it on another ASN, is the
+      // attacker's; the AppIds under it are the family switches.
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/sentinelone/s4-device-registered-by-the-victim-account-and-the"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Device registration"
+    stage_ord: 4
+    platform: "SentinelOne"
+    title: "Device registered by the victim account, and the broker-client device-code variant"
+    why: "A device the attacker registers lets them request a Primary Refresh Token for silent sign-in; it has to be disabled in Entra, separately from revoking the user's sessions. Since early 2025 the kits request the code as the Microsoft Authentication Broker (29d9ed98), which goes straight to a device and a PRT."
+    how: null
+    fp: "Genuine Entra joins also hit the Device Registration Service from the broker, from the corporate network; the deviceCode protocol on the broker AppId has no legitimate source."
+    query: |-
+      dataSource.name = '<entra_audit_source>' AND (* contains 'Register device' OR * contains 'Add device' OR * contains 'Add registered owner to device') AND * contains '<upn>'
+      | columns *
+      // The broker variant, all users:
+      dataSource.name = '<entra_signin_source>' AND * contains 'deviceCode' AND * contains '29d9ed98-a469-4536-ade2-f981bc1d605e'
+      | group Events = count() by <user_field>, <ip_field>
+    tested: null
+    attack:
+      - "T1098.005"
+  - id: "device-code-response/sentinelone/s5-consent-permission-grants-and-service-principal"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Consent"
+    stage_ord: 5
+    platform: "SentinelOne"
+    title: "Consent, permission grants and service-principal changes by the victim account"
+    why: "A consented app keeps its own access after the user's sessions are revoked. A non-admin user cannot create a grant through Graph with a refresh token alone; consent usually needs a second lure, so an empty result is normal. The same search answers step 11."
+    how: null
+    fp: "Admin consent by your identity team fires constantly; keep rows where the actor is the victim or the source IP is in the attacker ASN."
+    query: |-
+      dataSource.name = '<entra_audit_source>' AND * contains '<upn>'
+        AND (* contains 'Consent to application' OR * contains 'Add delegated permission grant' OR * contains 'Add service principal' OR * contains 'Add member to role')
+      | columns *
+    tested: null
+    attack:
+      - "T1528"
+      - "T1098.001"
+  - id: "device-code-response/sentinelone/s6-mail-and-file-access-by-the-victim-account-by-so"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Data access"
+    stage_ord: 6
+    platform: "SentinelOne"
+    title: "Mail and file access by the victim account, by source IP"
+    why: "Access from the attacker's IP is the evidence legal and privacy need to decide whether this is a notifiable breach. MailItemsAccessed is in Audit Standard since late 2023, so every tenant has it."
+    how: null
+    fp: "The owner's own Outlook dominates MailItemsAccessed; split by client IP first. Exchange throttles MailItemsAccessed for 24 hours after 1,000 records (IsThrottled), so a throttled row means more than you can see."
+    query: |-
+      dataSource.name = '<m365_source>' AND * contains '<upn>'
+        AND (* contains 'MailItemsAccessed' OR * contains 'FileDownloaded' OR * contains 'FileAccessed' OR * contains 'SearchQueryInitiatedExchange')
+      | group Events = count() by <operation_field>, <client_ip_field>, <client_app_id_field>
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1213.002"
+  - id: "device-code-response/sentinelone/s7-mail-and-teams-messages-sent-from-the-account"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Outbound"
+    stage_ord: 7
+    platform: "SentinelOne"
+    title: "Mail and Teams messages sent from the account"
+    why: "Lateral phishing from the compromised mailbox is the most common follow-on; the Send audit row carries the client and IP that made it."
+    how: null
+    fp: "Delegates with SendAs on shared mailboxes send all day from the office egress; the row that matters has the attacker's client IP."
+    query: |-
+      dataSource.name = '<m365_source>' AND * contains '<upn>'
+        AND (* contains '"Operation":"Send"' OR * contains 'SendAs' OR * contains 'MessageSent')
+      | group Events = count() by <operation_field>, <client_ip_field>
+    tested: null
+    attack:
+      - "T1534"
+  - id: "device-code-response/sentinelone/s8-other-users-device-code-sign-ins-across-the-tena"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Spread"
+    stage_ord: 8
+    platform: "SentinelOne"
+    title: "Other users: device-code sign-ins across the tenant, and anyone from the attacker ASN"
+    why: "Campaigns target many users at once; every account found here needs the same containment. Pivot on the ASN, not the IP: kits rotate addresses inside one range within days."
+    how: null
+    fp: "Exclude the step 7 exception group; pivot on ASN only for hosting, VPS and proxy ranges."
+    query: |-
+      dataSource.name = '<entra_signin_source>' AND * contains 'deviceCode' AND * contains '"errorCode":0'
+      | group Events = count() by <user_field>
+      // Then anyone from the attacker's ASN:
+      dataSource.name = '<entra_signin_source>' AND <asn_field> = <attacker asn>
+      | group Events = count() by <user_field>, <ip_field>
+    tested: null
+    attack:
+      - "T1528"
+      - "T1550.001"
+  - id: "device-code-response/sentinelone/s9-refused-and-successful-token-use-after-the-revoc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "SentinelOne"
+    title: "Refused and successful token use after the revocation time"
+    why: "The account is disabled at step 2, so a successes-only search is empty by construction. Proof of containment is the attacker's refreshes failing with 50057 or 50173 from their ASN; any errorCode 0 after the revocation time is a live channel."
+    how: null
+    fp: "The user's own clients also fail with 50057 and 50173 from the usual ASN; a success inside the first hour from a non-CAE client is a pre-revocation access token, not a miss."
+    query: |-
+      dataSource.name = '<entra_signin_source>' AND (<asn_field> = <attacker asn> OR * contains '<upn>')
+      | group Events = count() by <user_field>, <ip_field>, <error_code_field>, <incoming_token_type_field>
+      // Time range: from the revocation time. errorCode 0 = live; 50057/50173 = refused.
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/velociraptor/s1-the-page-that-sent-the-user-to-the-device-code-p"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Velociraptor"
+    title: "The page that sent the user to the device-code prompt"
+    why: "The visit immediately before the devicelogin page in the victim's browser history is the lure: a mail link, a Teams message or a document. It is the only lure artefact an endpoint tool can collect."
+    how: null
+    fp: null
+    query: |-
+      Windows.Applications.Chrome.History      (globs cover Chrome, Edge, Brave, Vivaldi, Opera)
+        userRegex = <user>
+        URLRegex  = .
+      // Sort on visit_time around the devicelogin visit from stage 2; the from_visit column links the referrer.
+      // The artifact is deprecated in favour of Generic.Forensic.SQLiteHunter, which covers the same files.
+    tested: null
+    attack:
+      - "T1566.002"
+  - id: "device-code-response/velociraptor/s2-the-devicelogin-visit-time-the-code-was-entered"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Code entered"
+    stage_ord: 2
+    platform: "Velociraptor"
+    title: "The devicelogin visit (time the code was entered)"
+    why: "No view of Entra sign-ins. The devicelogin or deviceauth visit in the browser history is the endpoint-side timestamp for the code entry, which pins the incident timeline when the sign-in log and the user's memory disagree."
+    how: null
+    fp: null
+    query: |-
+      Windows.Applications.Chrome.History
+        userRegex = <user>
+        URLRegex  = (?i)devicelogin|oauth2/deviceauth
+      // Collect the History files too (Windows.KapeFiles.Targets, target WebBrowsers) for chain of custody.
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/splunk/s1-lure-mail-by-message-trace-and-device-code-attem"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Splunk"
+    title: "Lure mail by message trace, and device-code attempts that did not complete"
+    why: "The message trace shows who received the lure; the failed device-code attempts show who it reached beyond the successes in stage 2 (53003 = blocked by Conditional Access, 50058 = code entered without a completed sign-in)."
+    how: null
+    fp: "The trace has no URL view, so match on sender and subject from the first reported lure; internal IT mail about Azure CLI set-up carries the same words."
+    query: |-
+      index=<o365> sourcetype IN (o365:graph:messagetrace, o365:reporting:messagetrace)
+        subject="*<lure subject fragment>*" OR src_user="<lure sender>"
+      | stats dc(recipient) as recipients values(recipient) as recipient_list min(_time) as first by src_user subject
+      | convert ctime(first)
+    tested: null
+    attack:
+      - "T1566.002"
+      - "T1528"
+  - id: "device-code-response/splunk/s1-device-code-attempts-that-did-not-complete-reach"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Splunk"
+    title: "Device-code attempts that did not complete (reach of the lure)"
+    why: "A code that expired or was blocked still shows the lure reached the user. These rows are the target list beyond the successes in stage 2."
+    how: null
+    fp: "After the step 7 block, legitimate Azure CLI and kubelogin users produce 53003 rows; drop the exception group's apps and read the remainder as reach."
+    query: |-
+      index=<entra> sourcetype=azure:monitor:aad category=SignInLogs
+        "properties.authenticationProtocol"=deviceCode "properties.status.errorCode"!=0
+      | stats count min(_time) as first values("properties.status.errorCode") as codes by user properties.appDisplayName
+      | convert ctime(first)
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/splunk/s2-successful-device-code-sign-ins"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Code entered"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "Successful device-code sign-ins"
+    why: "Every user on this list may have handed over tokens: this is the containment scope. The IP on these events is the victim's browser, not the attacker's."
+    how: null
+    fp: "Azure CLI on headless hosts, kubelogin, Arc onboarding, Teams Rooms and printers use device code daily; baseline 30 days by appId and user, then treat a new app for a known user as a hit."
+    query: |-
+      index=<entra> sourcetype=azure:monitor:aad category=SignInLogs
+        "properties.authenticationProtocol"=deviceCode "properties.status.errorCode"=0
+      | stats min(_time) as first max(_time) as last values(src) as src values(properties.userAgent) as agents
+          by user properties.appDisplayName properties.appId
+      | convert ctime(first) ctime(last)
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/splunk/s3-token-use-from-another-ip-after-the-device-code"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Token use"
+    stage_ord: 3
+    platform: "Splunk"
+    title: "Token use from another IP after the device-code sign-in, including FOCI app switches"
+    why: "The IP that redeems and refreshes the tokens is the attacker's. The refresh token is family-scoped, so the attacker's later rows carry another family appId (Office d3590ed6, Azure CLI 04b07795, Azure PowerShell 1950a258, Broker 29d9ed98, VS Code aebc6443, Teams 1fec8e78): stats by user and src, not by app. Give it 48 hours; CAE-capable tokens refresh late."
+    how: null
+    fp: "The user's own phone and VPN reconnects show as a second src within minutes on a mobile or corporate ASN; rank hosting, VPS and proxy ASNs first."
+    query: |-
+      index=<entra> sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs)
+        user="<upn>" "properties.status.errorCode"=0
+      | eval devicecode=if('properties.authenticationProtocol'="deviceCode", 1, 0)
+      | stats min(_time) as first max(_time) as last max(devicecode) as devicecode_event
+          values(properties.appId) as app_ids values(properties.appDisplayName) as apps
+          values(properties.incomingTokenType) as token_types
+          by src properties.autonomousSystemNumber category
+      | sort first | convert ctime(first) ctime(last)
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/splunk/s4-device-registered-by-the-victim-account-and-the"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Device registration"
+    stage_ord: 4
+    platform: "Splunk"
+    title: "Device registered by the victim account, and the broker-client device-code variant"
+    why: "A device the attacker registers lets them request a Primary Refresh Token for silent sign-in; it has to be disabled in Entra, separately from revoking the user's sessions. Since early 2025 the kits request the code as the Microsoft Authentication Broker (29d9ed98), which goes straight to a device and a PRT."
+    how: null
+    fp: "Intune autopilot and the user's own new laptop write the same events; the attacker's device has no MDM enrolment, a src in the attacker ASN and a registration minutes after the device-code event."
+    query: |-
+      index=<entra> sourcetype=azure:monitor:aad
+        operationName IN ("Register device", "Add device", "Add registered owner to device") properties.result=success
+        user="<upn>"
+      | table _time operationName user src properties.targetResources{}.displayName properties.targetResources{}.id
+    tested: null
+    attack:
+      - "T1098.005"
+  - id: "device-code-response/splunk/s4-device-code-requested-as-the-authentication-brok"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Device registration"
+    stage_ord: 4
+    platform: "Splunk"
+    title: "Device code requested as the Authentication Broker, and PRT sign-ins from the new device"
+    why: "A deviceCode sign-in to the broker is never a normal user action; the PRT sign-ins that follow carry the attacker's device id and show whether the device disable in step 4 took effect (the PRT renews about every four hours)."
+    how: null
+    fp: "Every PRT sign-in from the user's real Entra-joined laptop lands here; keep the device ids registered inside the window."
+    query: |-
+      index=<entra> sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs)
+        (("properties.appId"="29d9ed98-a469-4536-ade2-f981bc1d605e" "properties.authenticationProtocol"=deviceCode)
+         OR (user="<upn>" "properties.incomingTokenType"=primaryRefreshToken))
+      | stats min(_time) as first max(_time) as last count by user src properties.deviceDetail.deviceId
+          properties.deviceDetail.trustType properties.deviceDetail.isCompliant properties.deviceDetail.isManaged
+      | sort first | convert ctime(first) ctime(last)
+    tested: null
+    attack:
+      - "T1098.005"
+      - "T1550.001"
+  - id: "device-code-response/splunk/s5-consent-permission-grants-and-service-principal"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Consent"
+    stage_ord: 5
+    platform: "Splunk"
+    title: "Consent, permission grants and service-principal changes by the victim account"
+    why: "A consented app keeps its own access to mail and files after the user's sessions are revoked. A refresh token alone cannot create a grant through Graph for a non-admin user; consent usually needs a second lure. The same search answers step 11."
+    how: null
+    fp: "Admin consent by your identity team and first-party permission grants fire constantly; keep rows where the actor is the victim or the IP is in the attacker ASN."
+    query: |-
+      index=<entra> sourcetype=azure:monitor:aad properties.result=success
+        operationName IN ("Consent to application", "Add delegated permission grant", "Add service principal",
+                          "Add service principal credentials", "Add member to role")
+        ("properties.initiatedBy.user.userPrincipalName"="<upn>" OR "properties.targetResources{}.userPrincipalName"="<upn>")
+      | rename properties.* as *
+      | eval permissions = mvindex('targetResources{}.modifiedProperties{}.newValue',
+          mvfind('targetResources{}.modifiedProperties{}.displayName', "ConsentAction.Permissions"))
+      | table _time operationName initiatedBy.user.userPrincipalName initiatedBy.user.ipAddress targetResources{}.displayName permissions
+    tested: null
+    attack:
+      - "T1528"
+      - "T1098.001"
+  - id: "device-code-response/splunk/s6-mail-and-file-access-by-the-victim-account-by-cl"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Data access"
+    stage_ord: 6
+    platform: "Splunk"
+    title: "Mail and file access by the victim account, by client and source IP"
+    why: "Access from the attacker's IP is the evidence legal and privacy need to decide whether this is a notifiable breach. MailItemsAccessed is in Audit Standard since late 2023; SearchQueryInitiated needs Audit Premium."
+    how: null
+    fp: "The owner's own Outlook dominates MailItemsAccessed; split by src and client first. Exchange throttles MailItemsAccessed for 24 hours after 1,000 records (IsThrottled in props), so a throttled row means more than you can see."
+    query: |-
+      index=<o365> sourcetype=o365:management:activity user="<upn>"
+        Operation IN (MailItemsAccessed, FileDownloaded, FileAccessed, SearchQueryInitiatedExchange, SearchQueryInitiatedSharePoint)
+      | eval client=coalesce(ClientAppId, AppId, ClientInfoString)
+      | stats count min(_time) as first max(_time) as last values(OperationProperties{}.Value) as props by Operation src client
+      | sort first | convert ctime(first) ctime(last)
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1213.002"
+  - id: "device-code-response/splunk/s7-mail-sent-from-the-account-by-message-trace-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Outbound"
+    stage_ord: 7
+    platform: "Splunk"
+    title: "Mail sent from the account, by message trace and by audit client"
+    why: "Lateral phishing from the compromised mailbox is the most common follow-on. The trace gives recipients and subjects; the Send audit row gives the client and IP that made it, which proves the attacker sent it."
+    how: null
+    fp: "Assistants and shared mailboxes mail many recipients every day; compare the recipient set with the 30 days before the window. Delegates with SendAs send from the office egress; the row that matters has the attacker's src."
+    query: |-
+      index=<o365> sourcetype IN (o365:graph:messagetrace, o365:reporting:messagetrace) src_user="<upn>"
+      | bin _time span=1h
+      | stats dc(recipient) as recipients values(subject) as subjects by _time
+      | sort _time
+      // Client and IP per send (audit):
+      index=<o365> sourcetype=o365:management:activity user="<upn>" Operation IN (Send, SendAs, SendOnBehalf, MessageSent)
+      | stats count min(_time) as first by Operation src ClientInfoString
+    tested: null
+    attack:
+      - "T1534"
+  - id: "device-code-response/splunk/s8-other-users-successful-device-code-sign-ins-acro"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Spread"
+    stage_ord: 8
+    platform: "Splunk"
+    title: "Other users: successful device-code sign-ins across the tenant"
+    why: "Campaigns target many users at once; every account found here needs the same containment. A new appId or a first-ever device-code sign-in for a user is the signal, not the sign-in itself."
+    how: null
+    fp: "Exclude the step 7 exception group's users and apps."
+    query: |-
+      index=<entra> sourcetype=azure:monitor:aad category=SignInLogs
+        "properties.authenticationProtocol"=deviceCode "properties.status.errorCode"=0
+      | stats min(_time) as first count values(properties.appDisplayName) as apps values(properties.autonomousSystemNumber) as asns by user
+      | sort first | convert ctime(first)
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/splunk/s8-anyone-else-seen-from-the-attacker-s-asn"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Spread"
+    stage_ord: 8
+    platform: "Splunk"
+    title: "Anyone else seen from the attacker's ASN"
+    why: "Kits rotate IPs inside one hosting or residential-proxy range within days, so a single-IP search clears nobody. Pivot on the ASN from stage 3, then narrow to the IP."
+    how: null
+    fp: "A carrier or large cloud ASN puts legitimate users behind the same number; pivot on ASN only for hosting, VPS and proxy ranges, otherwise on the /24."
+    query: |-
+      index=<entra> sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs)
+        ("properties.autonomousSystemNumber"=<attacker asn> OR src IN ("<attacker ip>"))
+      | stats dc(user) as users values(user) as user_list min(_time) as first values(properties.status.errorCode) as codes
+          by properties.autonomousSystemNumber src
+      | convert ctime(first)
+    tested: null
+    attack:
+      - "T1550.001"
+      - "T1078.004"
+  - id: "device-code-response/splunk/s9-refused-and-successful-token-use-after-the-revoc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Splunk"
+    title: "Refused and successful token use after the revocation time"
+    why: "The account is disabled at step 2, so a successes-only search is empty by construction. Proof of containment is the attacker's refreshes failing with 50057 (disabled) or 50173 (revoked) from their ASN, carrying a refreshToken or primaryRefreshToken; any errorCode 0 after the revocation time is a live channel."
+    how: null
+    fp: "The user's own clients also fail with 50057 and 50173 from the usual ASN; a success inside the first hour from a non-CAE client is a pre-revocation access token, not a miss."
+    query: |-
+      index=<entra> sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs)
+        earliest="<MM/DD/YYYY:HH:MM:SS revocation time>"
+        ("properties.autonomousSystemNumber"=<attacker asn> OR user="<upn>")
+        ("properties.incomingTokenType" IN (refreshToken, primaryRefreshToken) OR "properties.status.errorCode"=0)
+      | eval verdict=case('properties.status.errorCode'=0, "LIVE", 'properties.status.errorCode' IN (50057, 50173, 70008, 50133, 53003), "refused", true(), "other")
+      | stats count max(_time) as last values(properties.status.errorCode) as codes values(properties.appDisplayName) as apps
+          by verdict user src properties.autonomousSystemNumber
+      | convert ctime(last)
+      // Access-token use that never hits sign-ins: index=<o365> user="<upn>" earliest=<revocation time> | stats count by Operation src
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/elastic/s1-device-code-attempts-that-did-not-complete-reach"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Lure"
+    stage_ord: 1
+    platform: "Elastic / Wazuh"
+    title: "Device-code attempts that did not complete (reach of the lure)"
+    why: "Neither integration carries mail URLs, and the lure URL is Microsoft's own; the lure's reach is measured from the sign-in side. Codes that expired or were blocked (53003) show who the campaign got to beyond the successes in stage 2."
+    how: null
+    fp: "After the step 7 block every legitimate device-code user produces 53003; drop the exception group's apps and read the remainder as reach."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > NOW() - 30 days
+        AND azure.signinlogs.properties.authentication_protocol == "deviceCode"
+        AND event.outcome != "success"
+      | STATS attempts = COUNT(*), first = MIN(@timestamp), codes = VALUES(azure.signinlogs.properties.status.error_code)
+        BY azure.signinlogs.properties.user_principal_name, azure.signinlogs.properties.app_display_name
+      | SORT first
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/elastic/s2-successful-device-code-sign-ins"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Code entered"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "Successful device-code sign-ins"
+    why: "Every user on this list may have handed over tokens: this is the containment scope. The IP on these events is the victim's browser, not the attacker's."
+    how: null
+    fp: "Azure CLI on headless hosts, kubelogin, Teams Rooms and printers use device code daily; baseline 30 days by app_id and user, then treat a new app for a known user as a hit."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > NOW() - 30 days
+        AND azure.signinlogs.properties.authentication_protocol == "deviceCode"
+        AND event.outcome == "success"
+      | STATS first = MIN(@timestamp), ips = VALUES(source.ip), agents = VALUES(user_agent.original)
+        BY azure.signinlogs.properties.user_principal_name, azure.signinlogs.properties.app_display_name, azure.signinlogs.properties.app_id
+      | SORT first
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/elastic/s3-token-use-from-another-ip-after-the-device-code"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Token use"
+    stage_ord: 3
+    platform: "Elastic / Wazuh"
+    title: "Token use from another IP after the device-code sign-in, including FOCI app switches"
+    why: "The IP that redeems and refreshes the tokens is the attacker's. The refresh token is family-scoped, so later rows carry another family app_id (Office d3590ed6, Azure CLI 04b07795, Azure PowerShell 1950a258, Broker 29d9ed98, VS Code aebc6443, Teams 1fec8e78): group on the user and read every app. Give it 48 hours."
+    how: null
+    fp: "The user's own phone and VPN reconnects show as a second IP within minutes on a mobile or corporate ASN; rank hosting, VPS and proxy ASNs first."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > NOW() - 30 days
+        AND azure.signinlogs.properties.user_principal_name == "<upn>"
+        AND event.outcome == "success"
+      | STATS first = MIN(@timestamp), last = MAX(@timestamp), uses = COUNT(*),
+              protocols = VALUES(azure.signinlogs.properties.authentication_protocol),
+              apps = VALUES(azure.signinlogs.properties.app_id),
+              token_types = VALUES(azure.signinlogs.properties.incoming_token_type)
+        BY source.ip, azure.signinlogs.properties.autonomous_system_number, azure.signinlogs.category
+      | SORT first
+      // Prebuilt rule "Entra ID OAuth Device Code Flow with Concurrent Sign-ins" (Elastic Security 8.19) alerts on
+      // the browser and the polling client appearing in one session with different user agents.
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/elastic/s4-device-registered-by-the-victim-account"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Device registration"
+    stage_ord: 4
+    platform: "Elastic / Wazuh"
+    title: "Device registered by the victim account"
+    why: "A device the attacker registers lets them request a Primary Refresh Token for silent sign-in; it has to be disabled in Entra, separately from revoking the user's sessions. Registration writes three audit activities; key on all of them."
+    how: null
+    fp: "Intune autopilot and the user's own new laptop write the same events; the attacker's device has no MDM enrolment, a source IP in the attacker ASN and a registration minutes after the device-code event."
+    query: |-
+      data_stream.dataset:"azure.auditlogs"
+        and azure.auditlogs.operation_name:("Register device" or "Add device" or "Add registered owner to device")
+        and azure.auditlogs.properties.initiated_by.user.userPrincipalName:"<upn>"
+      // Columns: azure.auditlogs.properties.target_resources.0.display_name, azure.auditlogs.properties.target_resources.0.id, event.outcome.
+      // Prebuilt rules (8.19): "Suspicious Microsoft OAuth Flow via Auth Broker to DRS" (same user and session
+      // from several IPs, broker to Device Registration Service), "Unusual Device Registration in Entra ID",
+      // "Entra ID RT to PRT Transition from Same User and Device".
+    tested: null
+    attack:
+      - "T1098.005"
+  - id: "device-code-response/elastic/s4-device-code-requested-as-the-authentication-brok"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Device registration"
+    stage_ord: 4
+    platform: "Elastic / Wazuh"
+    title: "Device code requested as the Authentication Broker, and PRT sign-ins from the new device"
+    why: "Since early 2025 the kits request the code as the Microsoft Authentication Broker (29d9ed98), which goes straight to a device and a PRT. The PRT sign-ins that follow carry the attacker's device id and show whether the device disable took effect (the PRT renews about every four hours)."
+    how: null
+    fp: "Every PRT sign-in from the user's real Entra-joined laptop lands here; keep the device ids registered inside the window. The deviceCode protocol on the broker app_id has no legitimate source."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > NOW() - 30 days
+        AND ((azure.signinlogs.properties.app_id == "29d9ed98-a469-4536-ade2-f981bc1d605e"
+              AND azure.signinlogs.properties.authentication_protocol == "deviceCode")
+             OR (azure.signinlogs.properties.user_principal_name == "<upn>"
+                 AND azure.signinlogs.properties.incoming_token_type == "primaryRefreshToken"))
+      | STATS first = MIN(@timestamp), last = MAX(@timestamp), signins = COUNT(*)
+        BY azure.signinlogs.properties.user_principal_name, source.ip,
+           azure.signinlogs.properties.device_detail.device_id, azure.signinlogs.properties.device_detail.trust_type,
+           azure.signinlogs.properties.device_detail.is_compliant, azure.signinlogs.properties.device_detail.is_managed
+      | SORT first
+    tested: null
+    attack:
+      - "T1098.005"
+      - "T1550.001"
+  - id: "device-code-response/elastic/s5-consent-permission-grants-and-service-principal"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Consent"
+    stage_ord: 5
+    platform: "Elastic / Wazuh"
+    title: "Consent, permission grants and service-principal changes by the victim account"
+    why: "A consented app keeps its own access to mail and files after the user's sessions are revoked. A refresh token alone cannot create a grant through Graph for a non-admin user; consent usually needs a second lure, so an empty result is normal. The same query answers step 11."
+    how: null
+    fp: "Admin consent by your identity team and first-party permission grants fire constantly; keep rows where the actor is the victim or the source IP is in the attacker ASN."
+    query: |-
+      data_stream.dataset:"azure.auditlogs"
+        and azure.auditlogs.operation_name:("Consent to application" or "Add delegated permission grant"
+             or "Add service principal" or "Add service principal credentials" or "Add member to role")
+        and event.outcome:"success"
+        and azure.auditlogs.properties.initiated_by.user.userPrincipalName:"<upn>"
+      // Columns: azure.auditlogs.properties.target_resources.0.display_name, azure.auditlogs.properties.target_resources.0.modified_properties, source.ip.
+    tested: null
+    attack:
+      - "T1528"
+      - "T1098.001"
+  - id: "device-code-response/elastic/s6-mail-and-file-access-by-the-victim-account-by-cl"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Data access"
+    stage_ord: 6
+    platform: "Elastic / Wazuh"
+    title: "Mail and file access by the victim account, by client and source IP"
+    why: "Access from the attacker's IP is the evidence legal and privacy need to decide whether this is a notifiable breach. MailItemsAccessed is in Audit Standard since late 2023, so every tenant has it."
+    how: null
+    fp: "The owner's own Outlook dominates MailItemsAccessed; split by source.ip and client first. Exchange throttles MailItemsAccessed for 24 hours after 1,000 records (IsThrottled in o365.audit.OperationProperties), so a throttled row means more than you can see."
+    query: |-
+      FROM logs-o365.audit-*
+      | WHERE @timestamp > NOW() - 30 days AND user.id == "<upn>"
+        AND event.action IN ("MailItemsAccessed", "FileDownloaded", "FileAccessed", "SearchQueryInitiatedExchange", "SearchQueryInitiatedSharePoint")
+      | STATS events = COUNT(*), first = MIN(@timestamp), last = MAX(@timestamp)
+        BY event.action, source.ip, o365.audit.ClientAppId, o365.audit.ClientInfoString
+      | SORT first
+      // Wazuh: rule.groups:office365 and data.office365.UserId:"<upn>" and data.office365.Operation:MailItemsAccessed
+    tested: null
+    attack:
+      - "T1114.002"
+      - "T1213.002"
+  - id: "device-code-response/elastic/s7-mail-and-teams-messages-sent-from-the-account-by"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Outbound"
+    stage_ord: 7
+    platform: "Elastic / Wazuh"
+    title: "Mail and Teams messages sent from the account, by client and source IP"
+    why: "Lateral phishing from the compromised mailbox is the most common follow-on; the Send audit row carries the client and IP that made it. Send moved into Audit Standard with MailItemsAccessed."
+    how: null
+    fp: "Delegates with SendAs on shared mailboxes send all day from the office egress; the row that matters has the attacker's source.ip or an unfamiliar client string."
+    query: |-
+      FROM logs-o365.audit-*
+      | WHERE @timestamp > NOW() - 30 days AND user.id == "<upn>"
+        AND event.action IN ("Send", "SendAs", "SendOnBehalf", "MessageSent")
+      | STATS events = COUNT(*), first = MIN(@timestamp), last = MAX(@timestamp)
+        BY event.action, source.ip, o365.audit.ClientInfoString
+      | SORT first
+    tested: null
+    attack:
+      - "T1534"
+  - id: "device-code-response/elastic/s8-other-users-device-code-sign-ins-across-the-tena"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Spread"
+    stage_ord: 8
+    platform: "Elastic / Wazuh"
+    title: "Other users: device-code sign-ins across the tenant, and anyone from the attacker ASN"
+    why: "Campaigns target many users at once; every account found here needs the same containment. Pivot on the ASN, not the IP: kits rotate addresses inside one range within days."
+    how: null
+    fp: "Exclude the step 7 exception group. A carrier or large cloud ASN puts legitimate users behind the same number; pivot on ASN only for hosting, VPS and proxy ranges."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > NOW() - 30 days
+        AND azure.signinlogs.properties.authentication_protocol == "deviceCode"
+        AND event.outcome == "success"
+      | STATS first = MIN(@timestamp), apps = VALUES(azure.signinlogs.properties.app_display_name)
+        BY azure.signinlogs.properties.user_principal_name
+      | SORT first
+      // Anyone else from the attacker's ASN (KQL, both sign-in categories):
+      // data_stream.dataset:"azure.signinlogs" and azure.signinlogs.properties.autonomous_system_number:<attacker asn>
+    tested: null
+    attack:
+      - "T1528"
+      - "T1550.001"
+  - id: "device-code-response/elastic/s9-refused-and-successful-token-use-after-the-revoc"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Elastic / Wazuh"
+    title: "Refused and successful token use after the revocation time"
+    why: "The account is disabled at step 2, so a successes-only query is empty by construction. Proof of containment is the attacker's refreshes failing with 50057 (disabled) or 50173 (revoked) from their ASN, carrying a refreshToken or primaryRefreshToken; any success after the revocation time is a live channel."
+    how: null
+    fp: "The user's own clients also fail with 50057 and 50173 from the usual ASN; a success inside the first hour from a non-CAE client is a pre-revocation access token, not a miss."
+    query: |-
+      FROM logs-azure.signinlogs-*
+      | WHERE @timestamp > TO_DATETIME("<revocation time, ISO 8601>")
+        AND (azure.signinlogs.properties.autonomous_system_number == <attacker asn>
+             OR azure.signinlogs.properties.user_principal_name == "<upn>")
+        AND (azure.signinlogs.properties.incoming_token_type IN ("refreshToken", "primaryRefreshToken")
+             OR event.outcome == "success")
+      | EVAL verdict = CASE(event.outcome == "success", "LIVE",
+                            azure.signinlogs.properties.status.error_code IN (50057, 50173, 70008, 50133, 53003), "refused",
+                            "other")
+      | STATS attempts = COUNT(*), last = MAX(@timestamp), codes = VALUES(azure.signinlogs.properties.status.error_code),
+              apps = VALUES(azure.signinlogs.properties.app_display_name)
+        BY verdict, azure.signinlogs.properties.user_principal_name, source.ip, azure.signinlogs.properties.autonomous_system_number
+      | SORT verdict
+      // Access-token use that never hits sign-ins: FROM logs-o365.audit-* | WHERE user.id == "<upn>" AND @timestamp > <revocation time>
+    tested: null
+    attack:
+      - "T1550.001"
+  - id: "device-code-response/defender/s8-going-broad-without-conditional-access-block-dev"
+    status: "active"
+    source: "https://github.com/MicrosoftDocs/entra-docs/commit/bb7280b7cd3538710cff4da36c4fd818bb436af1 (security-defaults.md, Manage individual Security Defaults protections (preview), 2026-10-14); discovered via T-Minus365 YouTube"
+    validated_at: "2026-10-25"
+    supersedes: null
+    stage: "Stage 8 · Spread"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Going broad without Conditional Access: block device code flow via the Security Defaults rule on Entra ID Free tenants"
+    why: "Step 7 blocks device code flow through a Conditional Access policy, and that requires Entra ID P1. Business Basic/Standard tenants on Entra ID Free can't create that policy. Their containment control is the Security Defaults \"Block device code flow\" rule. In the individual-protections preview it can be switched on by itself, leaving the other three rules (admin MFA, all-user MFA, legacy-auth block) as they are. Without the preview, the only option is turning on the whole Security Defaults baseline, which brings in MFA for all users mid-incident. Drawback: the SD rule has no documented exclusion list, so every legitimate device-code user (Azure CLI on headless hosts, Teams Rooms, printers) breaks with no exception group. Pull the device-code sign-in list first anyway, so you know what will break and can tell those owners."
+    how: null
+    fp: "Not the path when the tenant has P1/P2: use the Conditional Access policy with an exception group. Not needed when Security Defaults is already on with the device-code block in effect; then a successful deviceCode sign-in means the block was turned off (Stage 2 criterion). Free tenants keep sign-in logs 7 days, so the exception-scoping list covers a week at most. Free tenants cannot read sign-in logs through Microsoft Graph or stream them to a workspace (both need P1/P2), so the exception list comes from the admin-center download, not from a query."
+    query: |-
+      # Is device code already blocked? Current Security Defaults state (classic toggle; readable on Free)
+      Get-MgPolicyIdentitySecurityDefaultEnforcementPolicy | Select-Object IsEnabled
+      # In preview tenants the device-code rule can be on while IsEnabled is False: check the rule's state on the Security Defaults page.
+      # Who will break: Entra admin center > Monitoring & health > Sign-in logs, last 7 days,
+      #   filter Authentication protocol = Device code and Status = Success, then Download (CSV).
+      #   Group the CSV by application and user; export it before you flip the rule.
+      # State change, not a query (preview tenants): Entra admin center > Security Defaults > Block device code flow > On
+    tested: null
+    attack:
+      - "T1528"
+  - id: "device-code-response/defender/s2-successful-device-code-sign-in-in-a-security-def"
+    status: "active"
+    source: "https://github.com/MicrosoftDocs/entra-docs/commit/bb7280b7cd3538710cff4da36c4fd818bb436af1; https://learn.microsoft.com/en-us/entra/fundamentals/security-defaults (device code block for new tenants from 2026-07-01); discovered via T-Minus365 YouTube"
+    validated_at: "2026-10-25"
+    supersedes: null
+    stage: "Stage 2 · Code entered"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Successful device-code sign-in in a Security Defaults tenant: find when the block was turned off"
+    why: "Security Defaults blocks device code flow. Microsoft Learn says this applies to all new tenants from 2026-07-01, and the individual-protections preview makes it a separate rule. A successful deviceCode sign-in (ResultType 0) in a tenant that relies on Security Defaults therefore means either the block was never in effect for that tenant or someone turned the rule or the whole baseline off. If it was turned off, that change sets the earliest start of the exposure window and is an attacker action in its own right. Look at the actor, the IP and whether the change sits close to the attacker's first device-code success (Stage 2 hunt), not the tenant's earliest one, which may be a legitimate Azure CLI user."
+    how: null
+    fp: "No Security Defaults change in the lookback, and the tenant predates the July 2026 enforcement: the block was never on. The entry path was open, but no one tampered with it. Unverified: older tenants may not have the block yet (the doc mentions \"planned device code flow enablement\" with no dates), and the exact audit entry written by a single-rule toggle is undocumented. A Microsoft or service actor changing the rule during the phased rollout is Microsoft, not the attacker. An empty result rules nothing out when the logs don't reach back far enough: Entra keeps audit logs 7 days on Free and 30 on P1/P2. If AuditLogs aren't streamed to the workspace, read them with Get-MgAuditLogDirectoryAudit or the admin-center audit log (Category = Policy), and treat a change older than the retention as unknown, not absent."
+    query: |-
+      // attackerFirstDC: the attacker's first successful device-code sign-in, from the Stage 2 hunt
+      let attackerFirstDC = datetime(<attacker's first device-code success>);
+      AuditLogs
+      | where TimeGenerated between ((attackerFirstDC - 30d) .. (attackerFirstDC + 1d))
+      | where OperationName has "security defaults"
+           or tostring(TargetResources) has_any ("Security Defaults", "identitySecurityDefaultsEnforcementPolicy")
+      | project TimeGenerated, OperationName, Result, Actor=tostring(InitiatedBy.user.userPrincipalName),
+                App=tostring(InitiatedBy.app.displayName), ActorIP=tostring(InitiatedBy.user.ipAddress),
+                Target=tostring(TargetResources[0].displayName), Modified=TargetResources[0].modifiedProperties, AttackerFirstDeviceCode=attackerFirstDC
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1556.009"
+      - "T1528"
+steps:
+  - ord: 1
+    time: null
+    title: "0. Export the logs for the window before anything is revoked"
+    why: "Containment writes new rows and the sources age out on their own: Entra keeps sign-in and audit logs 30 days on P1/P2 and 7 days on the free tier; the Unified Audit Log 180 days on Audit Standard, one year on Premium; mailbox audit 90 days by default. MicrosoftGraphActivityLogs exists only in a Sentinel workspace with the diagnostic setting on. Pull sign-ins (interactive and non-interactive), audit logs, the UAL and the Graph activity for the window, hash the files, and record the hashes in the case. Why: the stage 9 verdict and any notification decision are made on these rows weeks later, when the live tenant no longer has them. Cmdlets are in the Defender tab's \"Preserve\" step."
+    critical: true
+  - ord: 2
+    time: null
+    title: "1. Disable the account, then revoke sessions and refresh tokens"
+    why: "Disable first: the attacker's next refresh fails with 50057. Then revoke: anything that survived the disable fails with 50173, and session cookies die with it. Those two failure codes from the attacker's ASN are what step 8 looks for. Mark the user compromised as well, so risk-based Conditional Access and Identity Protection react. Re-authentication is forced at the next access-token expiry, about one hour for the attacker's non-CAE tooling. Why: revoking first leaves a window in which a refresh from the still-enabled account can succeed before the disable lands."
+    critical: true
+  - ord: 3
+    time: null
+    title: "2. Keep the account disabled; reset the password only after investigation"
+    why: "Buys investigation time without giving the attacker a reset notification window. Re-enable only after step 8 shows refused refreshes and no success since the revocation time, and after MFA re-registration from a Temporary Access Pass. The Defender portal actions (Disable user, Revoke session, Mark user as compromised) run in Entra and need an Entra role; the Entra SOC Identity Responder built-in role (introduced July 2026) carries exactly these without User Administrator."
+    critical: true
+  - ord: 4
+    time: null
+    title: "3. Export the MFA methods, remove what the user did not enrol, issue a TAP"
+    why: "The attacker may have enrolled a second Authenticator or phone with the stolen session. Export the full method list first, remove anything the user did not enrol (the \"User registered security info\" audit event dates each one), then issue a one-time Temporary Access Pass for re-registration rather than trusting a method the attacker could also hold."
+    critical: true
+  - ord: 5
+    time: null
+    title: "4. Export, then disable, the devices registered in the access window"
+    why: "A registered device produces a Primary Refresh Token enabling silent SSO across the tenant. Since early 2025 the kits request the device code as the Microsoft Authentication Broker, so the device and the PRT arrive without a second lure (Microsoft Threat Intelligence, Storm-2372, February 2025). Export the device object first — registrationDateTime, trustType, operatingSystem and the OS build are the attribution evidence — then disable it. The PRT renews about every four hours, so the disable is not instant; the stage 4 PRT hunt confirms when it bit. Disable only the devices from the window; disabling all of them locks out the user's own machines."
+    critical: true
+  - ord: 6
+    time: null
+    title: "5. Disable any consented app and revoke its grants from the access window"
+    why: "A consented app keeps its own access to mail and files after the user's sessions are revoked. A stolen refresh token alone does not get the attacker there: a user without an admin role cannot create a permission grant through Graph, so consent usually needs a second, consent-phishing lure, or a tenant that allows user consent. Export the grants, then disable the app's service principal (one action that stops its token path) and remove the grants in the same pass as steps 1–4. Get-MgUserOauth2PermissionGrant lists only this user's own consents; an admin-consented grant on the same app does not appear there, so query the grant by client id too, and check the app's own application permissions."
+    critical: true
+  - ord: 7
+    time: null
+    title: "6. Litigation hold, export, then purge inbox rules and SMTP forwarding"
+    why: "The #1 BEC persistence mechanism. Attacker creates rules redirecting finance / IT / security replies into hidden folders so the legitimate user never sees them. Also check ForwardingSmtpAddress and ForwardingAddress. Put the mailbox on litigation hold first (needs Exchange Online Plan 2 or the Archiving add-on), export the rules, then remove them — a purged rule is destroyed evidence, and its shape drives the tenant-wide hunt."
+    critical: true
+  - ord: 8
+    time: null
+    title: "7. Go broad: block Device Code flow tenant-wide, contain every account seen from the attacker"
+    why: "If the tenant doesn't already block Device Code flow, block it now in Conditional Access for everyone except the exception group — that single policy cuts the campaign's entry path for every user it may have reached. Build the exception group first, from 30 days of successful deviceCode sign-ins by app and user (the Defender tab's \"Scope the exception group\" query); without it, expect Azure CLI on headless hosts and CI runners, kubelogin, Azure Arc onboarding, Teams Rooms and Surface Hub, Android phones in Teams and Outlook, and printers that mail to M365 to break the moment the policy is enabled. Then check for other accounts with successful device-code sign-ins or any sign-in from the attacker's ASN (not only the IP) since the campaign started, and give each one steps 1–6. Broad containment costs some friction for the few legitimate device-code users; narrow containment against a multi-user campaign costs the eviction."
+    critical: true
+  - ord: 9
+    time: null
+    title: "8. Verify the containment held"
+    why: "The account is disabled, so \"no successes since revocation\" is empty by construction and proves nothing. Run the Stage 9 · Still active hunts and look for two things: refused refreshes from the attacker's ASN (50057 user disabled, 50173 token revoked, carrying a refreshToken or primaryRefreshToken), which show the attacker tried and failed; and any success, Graph call or mailbox read more than an hour after the revocation time, for any account in scope, which means a channel was missed — usually a device object or an app grant. Widen the containment before moving on. The attacker is out when the refusals are there and the successes are not."
+    critical: true
+actions:
+  - platform: "Defender XDR / Sentinel"
+    label: "T+0 · Preserve"
+    name: "Export the logs for the window before anything is revoked"
+    tier: "read"
+    tier_inferred: false
+    why: "Revocation and disablement write new rows and, in Entra's own store, the window closes on its own: sign-in and audit logs live 30 days on P1/P2 and 7 days on the free tier, the Unified Audit Log 180 days on Audit Standard and one year on Premium, mailbox audit 90 days by default. MicrosoftGraphActivityLogs exists only in the Sentinel workspace. Pull the window now; the hunts above run on the export if the live data ages out."
+    how: null
+    body: |-
+      # Entra sign-ins (interactive) and audit, Graph v1.0; non-interactive sign-ins need the beta cmdlet
+      Get-MgAuditLogSignIn -Filter "userPrincipalName eq '<upn>' and createdDateTime ge <start ISO 8601>Z" -All |
+        Export-Csv signins-<upn>.csv -NoTypeInformation
+      Get-MgBetaAuditLogSignIn -Filter "userPrincipalName eq '<upn>' and signInEventTypes/any(t: t eq 'nonInteractiveUser') and createdDateTime ge <start>Z" -All |
+        Export-Csv noninteractive-<upn>.csv -NoTypeInformation
+      Get-MgAuditLogDirectoryAudit -Filter "activityDateTime ge <start>Z" -All | Export-Csv auditlogs.csv -NoTypeInformation
+      # Unified Audit Log (Exchange Online PowerShell); 5,000 rows per page, ReturnLargeSet pages to 50,000
+      Search-UnifiedAuditLog -StartDate <start> -EndDate <end> -UserIds <upn1>,<upn2> -SessionCommand ReturnLargeSet -ResultSize 5000 |
+        Export-Csv ual-window.csv -NoTypeInformation
+      # Sentinel tables for the window, including MicrosoftGraphActivityLogs (workspace only)
+      az monitor log-analytics query -w <workspace id> -o json --analytics-query "
+        union SigninLogs, AADNonInteractiveUserSignInLogs, AuditLogs, OfficeActivity, MicrosoftGraphActivityLogs
+        | where TimeGenerated between (datetime(<start>) .. datetime(<end>))" > sentinel-window.json
+      Get-FileHash signins-<upn>.csv, noninteractive-<upn>.csv, auditlogs.csv, ual-window.csv, sentinel-window.json -Algorithm SHA256
+    attack: []
+  - platform: "Defender XDR / Sentinel"
+    label: "Step 7 · Scope the exception group"
+    name: "Who legitimately uses device code, before you flip the block"
+    tier: "destructive"
+    tier_inferred: false
+    why: "The block fails every device-code sign-in in the tenant, including the ones the business depends on. Thirty days of successes by app and user is the exception group; anything not on it breaks on purpose."
+    how: null
+    body: |-
+      SigninLogs
+      | where TimeGenerated > ago(30d)
+      | where AuthenticationProtocol =~ "deviceCode" and ResultType == "0"
+      | summarize SignIns = count(), Users = make_set(UserPrincipalName), Last = max(TimeGenerated),
+                  ASNs = make_set(AutonomousSystemNumber)
+          by AppDisplayName, AppId
+      | order by SignIns desc
+      // Expected breakage without an exception: Azure CLI on headless hosts and CI runners, kubelogin, Azure Arc
+      // onboarding, Teams Rooms and Surface Hub, Android phones signing in to Teams and Outlook, printers and
+      // scanners that mail to M365.
+    attack:
+      - "T1528"
+  - platform: "Defender XDR / Sentinel"
+    label: "Step 7 · Go broad"
+    name: "Block Device Code flow for the whole tenant"
+    tier: "destructive"
+    tier_inferred: false
+    why: "One policy cuts the campaign's entry path for every user it reached, not only the one you found. A blocked attempt lands in stage 1 as ResultType 53003, which is how you measure the campaign's reach afterwards."
+    how: "Console: Entra admin center › Conditional Access › New policy › Conditions › Authentication flows › Device code flow; Grant › Block access. Exclude the exception group from the previous step and your break-glass accounts. During an incident the state is enabled, not report-only."
+    body: |-
+      New-MgIdentityConditionalAccessPolicy -BodyParameter @{
+        displayName   = "IR - block device code flow"
+        state         = "enabled"
+        conditions    = @{
+          users               = @{ includeUsers = @("All"); excludeGroups = @("<exception group id>")
+                                  excludeUsers = @("<break-glass account id>") }
+          applications        = @{ includeApplications = @("All") }
+          clientAppTypes      = @("all")
+          authenticationFlows = @{ transferMethods = "deviceCodeFlow" }
+        }
+        grantControls = @{ operator = "OR"; builtInControls = @("block") }
+      }
+    attack:
+      - "T1528"
+  - platform: "Defender XDR / Sentinel"
+    label: "Steps 1–2 · Contain"
+    name: "Disable, then revoke, then mark compromised, for every account seen from the attacker"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Disable first so the next refresh fails with 50057, then revoke so any token that survives the disable fails with 50173; revoking one victim while the campaign's others stay live tells the attacker they have been found. A password reset alone is not containment: for a cloud-managed user an admin reset does revoke password-based refresh tokens, but tokens issued through SSO, passwordless or a federated IdP survive it, and the device-code token is one of those. Access tokens already issued stay valid until they expire, about one hour; CAE shortens that to minutes only for CAE-capable clients (Office, Teams, Outlook, Edge), and roadtx, TokenTactics and the kits' own pollers are not."
+    how: "Console: Defender portal › Identities › <user> › Disable user / Revoke session / Mark user as compromised. These actions run in Entra and need an Entra role; the Entra SOC Identity Responder built-in role (introduced July 2026) carries exactly these three, without User Administrator."
+    body: |-
+      "<upn1>","<upn2>" | ForEach-Object {
+        $u = Get-MgUser -UserId $_ -Property Id
+        Update-MgUser -UserId $u.Id -AccountEnabled:$false            # next refresh fails: 50057
+        Revoke-MgUserSignInSession -UserId $u.Id                       # refresh tokens and session cookies: 50173
+        Confirm-MgRiskyUserCompromised -UserIds @($u.Id)               # risk = high; risk-based CA and Identity Protection react
+      }
+    attack: []
+  - platform: "Defender XDR / Sentinel"
+    label: "Step 3 · Contain"
+    name: "Export the MFA methods, remove what the user did not enrol, issue a TAP"
+    tier: "destructive"
+    tier_inferred: false
+    why: "The attacker may have enrolled a second Authenticator or phone with the stolen session. Record the original list before you delete anything; the user re-registers from a Temporary Access Pass, not from a method the attacker could also hold."
+    how: null
+    body: |-
+      Get-MgUserAuthenticationMethod -UserId <upn> |
+        Select-Object Id, @{n='Type';e={$_.AdditionalProperties['@odata.type']}}, @{n='Detail';e={$_.AdditionalProperties | ConvertTo-Json -Compress}} |
+        Export-Csv mfa-<upn>.csv -NoTypeInformation
+      Remove-MgUserAuthenticationMicrosoftAuthenticatorMethod -UserId <upn> -MicrosoftAuthenticatorAuthenticationMethodId <id>
+      Remove-MgUserAuthenticationPhoneMethod -UserId <upn> -PhoneAuthenticationMethodId <id>
+      Remove-MgUserAuthenticationSoftwareOathMethod -UserId <upn> -SoftwareOathAuthenticationMethodId <id>
+      Remove-MgUserAuthenticationFido2Method -UserId <upn> -Fido2AuthenticationMethodId <id>
+      Remove-MgUserAuthenticationEmailMethod -UserId <upn> -EmailAuthenticationMethodId <id>
+      New-MgUserAuthenticationTemporaryAccessPassMethod -UserId <upn> -BodyParameter @{ lifetimeInMinutes = 60; isUsableOnce = $true }
+    attack:
+      - "T1556.006"
+  - platform: "Defender XDR / Sentinel"
+    label: "Steps 4–5 · Contain"
+    name: "Export and disable the attacker's device, disable the app, remove the grants, in the same pass"
+    tier: "destructive"
+    tier_inferred: false
+    why: "A registered device or a consented app keeps access after the sessions are revoked. Export the device object first; the registration time, trust type and OS build are the attribution evidence and go with the device when it is deleted later. Disabling the service principal stops the app's own token path at once; removing grants one by one does not."
+    how: "Disable only the devices registered in the access window; disabling all of them locks out the user's own machines. Get-MgUserOauth2PermissionGrant lists only this user's own consents; an admin-consented (AllPrincipals) grant on the same app does not show there, so query the grant by client id as well. The PRT on the attacker's device renews about every four hours, so the disable takes effect at the next renewal; the stage 4 PRT hunt confirms it."
+    body: |-
+      Get-MgDevice -DeviceId <device object id> -Property Id,DeviceId,DisplayName,RegistrationDateTime,TrustType,OperatingSystem,OperatingSystemVersion,IsCompliant,IsManaged,EnrollmentType,ApproximateLastSignInDateTime |
+        Export-Csv device-<device object id>.csv -NoTypeInformation
+      Update-MgDevice -DeviceId <device object id> -AccountEnabled:$false            # -DeviceId takes the object id
+      Get-MgUserOauth2PermissionGrant -UserId <user id> -All                          # this user's own consents
+      Get-MgOauth2PermissionGrant -Filter "clientId eq '<app service principal id>'" -All   # every grant on the app, both consent types
+      Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId <app service principal id> -All   # application permissions the app holds
+      Get-MgServicePrincipalAppRoleAssignedTo -ServicePrincipalId <app service principal id> -All   # users and groups assigned to it
+      Update-MgServicePrincipal -ServicePrincipalId <app service principal id> -AccountEnabled:$false
+      Remove-MgOauth2PermissionGrant -OAuth2PermissionGrantId <grant id>
+    attack:
+      - "T1098.005"
+      - "T1098.001"
+  - platform: "Defender XDR / Sentinel"
+    label: "Step 6 · Preserve"
+    name: "Litigation hold before the rules and forwarding are purged"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Removing an inbox rule or forwarding address destroys the evidence of what the attacker diverted. A hold keeps the mailbox, the rules and the deleted items as they are; export the rules, then remove them."
+    how: "Exchange Online PowerShell. Litigation hold needs an Exchange Online Plan 2 licence or the Exchange Online Archiving add-on on the mailbox."
+    body: |-
+      Set-Mailbox -Identity <upn> -LitigationHoldEnabled $true -LitigationHoldDuration 365
+      Get-InboxRule -Mailbox <upn> -IncludeHidden | Export-Clixml inboxrules-<upn>.xml
+      Get-Mailbox -Identity <upn> | Select-Object ForwardingSmtpAddress, ForwardingAddress, DeliverToMailboxAndForward | Export-Csv forwarding-<upn>.csv
+      Get-InboxRule -Mailbox <upn> -IncludeHidden | Where-Object { $_.Name -notin @("<rules the user confirms>") } | Remove-InboxRule -Confirm:$false
+      Set-Mailbox -Identity <upn> -ForwardingSmtpAddress $null -ForwardingAddress $null -DeliverToMailboxAndForward $false
+    attack:
+      - "T1114.003"
+      - "T1564.008"
+  - platform: "Defender XDR / Sentinel"
+    label: "Once scoped · Surgical"
+    name: "Isolate the victim's endpoint only if a file was delivered"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Device-code phishing runs on Microsoft's own sign-in page and leaves no malware; isolation helps only if the lure also dropped a file. The endpoint evidence that does matter is the browser history, which fixes when the code was entered and which page sent the user there."
+    how: "Live Response: getfile \"C:\\Users\\<user>\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\History\" and the Chrome equivalent; open the SQLite file offline."
+    body: ""
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "T+0 · Preserve"
+    name: "Export first"
+    tier: "write"
+    tier_inferred: true
+    why: "The repo keeps what the connector ingested; Entra's own store ages out at 30 days on P1/P2, 7 days free, and the Unified Audit Log at 180 days on Audit Standard. Run the Defender tab's export step for the window before revoking anything."
+    how: null
+    body: ""
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "Steps 1–7 · Contain"
+    name: "Revocation happens in Entra"
+    tier: "destructive"
+    tier_inferred: false
+    why: "No Falcon host action revokes Entra tokens; the containment is identity-side. Disable before revoke, and expect issued access tokens to live about an hour; attacker tooling is not CAE-capable."
+    how: "Run the containment steps on this page: disable and revoke, reset MFA, disable the devices from stage 4, disable the app and remove the consents from stage 5, block Device Code flow tenant-wide."
+    body: ""
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "Steps 1–7 · Contain"
+    name: "Run it for every affected account with Fusion SOAR"
+    tier: "destructive"
+    tier_inferred: false
+    why: "A tested workflow revokes every account the campaign reached in one go, instead of one account at a time."
+    how: "Falcon Fusion SOAR with the Microsoft Entra ID SOAR actions from the CrowdStrike Marketplace can disable the user, revoke the sessions, reset the password and reset authentication methods. Build and test the workflow before you need it, and check that it disables before it revokes."
+    body: ""
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "Timeline · Collect"
+    name: "Collect the victim's browser history (RTR)"
+    tier: "write"
+    tier_inferred: false
+    why: "The devicelogin visit fixes when the code was entered, and the page before it is the lure."
+    how: "Open the History files offline (SQLite)."
+    body: |-
+      get "C:\Users\<user>\AppData\Local\Microsoft\Edge\User Data\Default\History"
+      get "C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\History"
+    attack: []
+  - platform: "SentinelOne"
+    label: "T+0 · Preserve"
+    name: "Export first"
+    tier: "write"
+    tier_inferred: true
+    why: "The Data Lake keeps what was ingested; Entra's own store ages out at 30 days on P1/P2, 7 days free, and the Unified Audit Log at 180 days on Audit Standard. Run the Defender tab's export step for the window before revoking anything."
+    how: null
+    body: ""
+    attack: []
+  - platform: "SentinelOne"
+    label: "Steps 1–7 · Contain"
+    name: "Revocation happens in Entra"
+    tier: "destructive"
+    tier_inferred: false
+    why: "No SentinelOne endpoint action revokes Entra tokens; the containment is identity-side. Disable before revoke, and expect issued access tokens to live about an hour."
+    how: "Run the containment steps on this page. If you run Hyperautomation with an Entra ID integration, check that it offers disable-user and revoke-sessions actions, in that order, before you rely on it."
+    body: ""
+    attack: []
+  - platform: "SentinelOne"
+    label: "Timeline · Collect"
+    name: "Collect the victim's browser history"
+    tier: "write"
+    tier_inferred: false
+    why: "The devicelogin visit fixes when the code was entered, and the page before it is the lure."
+    how: "Fetch Files from the victim's endpoint: the Edge or Chrome History file (paths as in the CrowdStrike tab). Open it offline."
+    body: ""
+    attack: []
+  - platform: "Velociraptor"
+    label: "Steps 1–7 · Contain"
+    name: "Nothing to contain on the endpoint"
+    tier: "destructive"
+    tier_inferred: false
+    why: "No malware lands in device-code phishing; revocation happens in Entra with this page's containment steps. Disable before revoke; issued access tokens live about an hour."
+    how: null
+    body: ""
+    attack: []
+  - platform: "Velociraptor"
+    label: "Timeline · Collect"
+    name: "Collect the victim's browser history"
+    tier: "write"
+    tier_inferred: false
+    why: "Fixes the time the code was entered and the lure page, for the incident timeline."
+    how: "Run on the victim's host. Windows.Applications.Chrome.History is deprecated in favour of Generic.Forensic.SQLiteHunter; both read the same History files."
+    body: |-
+      Windows.Applications.Chrome.History
+        userRegex = <user>
+        URLRegex  = (?i)devicelogin|oauth2/deviceauth
+      Windows.KapeFiles.Targets
+        WebBrowsers = Y
+    attack: []
+  - platform: "Splunk"
+    label: "T+0 · Preserve"
+    name: "Export first"
+    tier: "write"
+    tier_inferred: true
+    why: "Your indexes keep what the add-ons pulled; Entra's own store ages out at 30 days on P1/P2, 7 days free, and the Unified Audit Log at 180 days on Audit Standard. Run the Defender tab's export step for the window before revoking anything."
+    how: null
+    body: ""
+    attack: []
+  - platform: "Splunk"
+    label: "Steps 1–7 · Contain"
+    name: "Hunt here, contain in Entra"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Splunk is where you hunt, not where you act; revocation, device and consent removal run in Entra. Disable before revoke; issued access tokens live about an hour."
+    how: "With Splunk SOAR, use the MS Graph for Active Directory connector (Splunkbase 6395): it has \"disable user\", \"disable tokens\" (invalidates the user's refresh tokens) and \"reset password\", in that order. The older Azure AD Graph connector is dead: Microsoft retired the Azure AD Graph API in 2025 and the connector's own README says to migrate. Device and consent removal stay in Entra."
+    body: ""
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "T+0 · Preserve"
+    name: "Export first"
+    tier: "write"
+    tier_inferred: true
+    why: "Your indices keep what the integrations pulled; Entra's own store ages out at 30 days on P1/P2, 7 days free, and the Unified Audit Log at 180 days on Audit Standard. Run the Defender tab's export step for the window before revoking anything."
+    how: null
+    body: ""
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "Steps 1–7 · Contain"
+    name: "Hunt here, contain in Entra"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Nothing runs on the victim's endpoint, so Elastic Defend host isolation does not help; revocation runs in Entra. Disable before revoke; issued access tokens live about an hour."
+    how: "Revoke with this page's containment steps."
+    body: ""
+    attack: []

@@ -1,0 +1,1929 @@
+# Source of truth for this playbook's IR criteria.
+# Hand-edit freely. Re-run 'bun run build:index' after any change.
+playbook: "bec-response"
+title: "BEC Response"
+platforms:
+  - "Defender XDR / Sentinel"
+  - "CrowdStrike Falcon"
+  - "SentinelOne"
+  - "Velociraptor"
+  - "Splunk"
+  - "Elastic / Wazuh"
+scenarios:
+  - id: "1"
+    status: "draft"
+    source: "research@2026-10-25 https://www.microsoft.com/en-us/security/blog/2026/01/21/multistage-aitm-phishing-bec-campaign-abusing-sharepoint/"
+    validated_at: null
+    supersedes: null
+    name: "AiTM-Led Mailbox Takeover (session cookie stolen, mailbox then used for fraud)"
+    indicators: "a lure (often SharePoint-hosted, from a trusted vendor) leads to a credential prompt; the risky sign-in shows MFA satisfied, followed by a sign-in from a different IP with the same session. Within minutes to hours: an inbox rule that deletes or marks-read incoming mail, and a new MFA method registered by the attacker (e.g. an OTP phone). Sentinel signals Microsoft names: MailItemsAccessed anomaly, Malicious_Inbox_Rule, SharePointFileOperation from a new IP or user agent."
+    discriminator: "MFA was satisfied on the risky sign-in and an authentication method was added shortly after — a password-only takeover shows neither. The cookie, not the password, is the credential: a password reset alone leaves the attacker in. Revoke sessions, remove the attacker-registered MFA method, delete the rules, then reset. Microsoft saw payment fraud start as little as 5 minutes after token theft (2022), so check Sent Items and the rules before anything else."
+    attack:
+      - "T1566.002"
+      - "T1557"
+      - "T1539"
+      - "T1550.004"
+      - "T1564.008"
+      - "T1098.005"
+    window: null
+  - id: "2"
+    status: "draft"
+    source: "research@2026-10-25 https://www.microsoft.com/en-us/security/blog/2026/01/21/multistage-aitm-phishing-bec-campaign-abusing-sharepoint/"
+    validated_at: null
+    supersedes: null
+    name: "Compromised Mailbox Phishing Onward (internal and external spread)"
+    indicators: "high-volume Send from the user to contacts and distribution lists taken from recent threads (600+ messages in Microsoft's case); NDRs and out-of-office replies deleted; the attacker answers recipients who question the mail and deletes those exchanges; a second wave of AiTM sign-ins from internal recipients who clicked."
+    discriminator: "the objective is more accounts, not a payment — no bank-detail change, no payment thread. Scope is every recipient who clicked, not one user: ZAP or purge the campaign and run the AiTM checks on each downstream account. If payment fraud also appears, it is scenario 1 or 4 with spread on top."
+    attack:
+      - "T1534"
+      - "T1566.002"
+      - "T1564.008"
+      - "T1078.004"
+    window: null
+  - id: "3"
+    status: "draft"
+    source: "research@2026-10-25 https://www.microsoft.com/en-us/security/blog/2025/10/09/investigating-targeted-payroll-pirate-attacks-affecting-us-universities/"
+    validated_at: null
+    supersedes: null
+    name: "Payroll / Direct-Deposit Diversion (fraud in the HR SaaS, Storm-2657)"
+    indicators: "SSO into the HR SaaS from the compromised identity; Workday 'Change My Account' or 'Manage Payment Elections' (visible through the Defender for Cloud Apps Workday connector); 'Add iOS/Android Device'; an inbox rule matching From @myworkday.com with DeleteMessage or MoveToFolder; SoftDelete/HardDelete/MoveToDeletedItems on the change notifications; an Entra 'Update user.' with StrongAuthenticationPhoneAppDetail within 6h of a medium or high risk sign-in."
+    discriminator: "the fraud is in the HR app, not in email: the decisive evidence is the HR SaaS audit log, and the inbox rule only hides its notifications. Containment adds restoring the bank details in the HR app, removing the attacker's MFA from the HR app or its MFA provider, and telling payroll before the next run."
+    attack:
+      - "T1078.004"
+      - "T1098.005"
+      - "T1564.008"
+      - "T1657"
+    window: null
+  - id: "4"
+    status: "draft"
+    source: "research@2026-10-25 https://www.microsoft.com/en-us/security/blog/2023/12/12/threat-actors-misuse-oauth-applications-to-automate-financially-driven-attacks/"
+    validated_at: null
+    supersedes: null
+    name: "Invoice Fraud From Inside Your Mailbox (conversation hijack)"
+    indicators: "reconnaissance first: MailItemsAccessed / FileAccessed on attachments and threads about 'payment' or 'invoice'; a rule that hides the counterparty's replies; then a reply inside an existing, genuine thread carrying new bank details."
+    discriminator: "the fraudulent message comes from your own authentic domain and passes SPF, DKIM and DMARC, and the attacker activity is in YOUR audit log. That separates it from scenario 5 (lookalike domain, your log clean) and scenario 6 (the supplier's tenant compromised, your log clean). Recall or freeze the payment in parallel with identity containment."
+    attack:
+      - "T1114.002"
+      - "T1534"
+      - "T1564.008"
+      - "T1657"
+    window: null
+  - id: "5"
+    status: "draft"
+    source: "research@2026-10-25 https://intelligence.abnormal.ai/attack-library/threat-actor-hijacks-conversation-using-look-alike-domain-in-attempt-to-divert-17m-wire-transfer"
+    validated_at: null
+    supersedes: null
+    name: "Lookalike-Domain Impersonation (no compromise of your tenant)"
+    indicators: "a newly registered lookalike domain (letter swap, homoglyph); a reply to an old genuine thread (a year stale in the 17M USD case), with lookalike CCs posing as other staff of the counterparty; no link or payload; message trace shows a first-seen sender domain."
+    discriminator: "your audit log is clean: no risky sign-in, no rule, no MailItemsAccessed anomaly. DMARC does not help because the attacker owns the domain. No identity reset — block the domain, recall the payment, request a takedown. Open question for scoping: how did the attacker get the thread history? If it was from the counterparty, they are in scenario 6 and should be told."
+    attack:
+      - "T1583.001"
+      - "T1684.001"
+      - "T1657"
+    window: null
+  - id: "6"
+    status: "draft"
+    source: "research@2026-10-25 https://www.microsoft.com/en-us/security/blog/2026/01/21/multistage-aitm-phishing-bec-campaign-abusing-sharepoint/"
+    validated_at: null
+    supersedes: null
+    name: "Supplier Mailbox Compromised (vendor email compromise, their tenant)"
+    indicators: "an authenticated inbound message from a real supplier address, passing authentication, carrying new bank instructions or a SharePoint/AiTM lure."
+    discriminator: "no attacker activity in your logs; the compromise is in the supplier's tenant, which you cannot investigate. Notify the supplier through a known-good channel, verify any payment change out-of-band, and block the sender temporarily. If your users clicked the lure, it becomes scenario 1 in your tenant."
+    attack:
+      - "T1586.002"
+      - "T1684.001"
+      - "T1657"
+    window: null
+  - id: "7"
+    status: "draft"
+    source: "research@2026-10-25 https://learn.microsoft.com/en-us/security/operations/incident-response-playbook-app-consent"
+    validated_at: null
+    supersedes: null
+    name: "OAuth App Mailbox Access (Graph API persistence)"
+    indicators: "the compromised user creates an app registration and adds credentials, or consents to a multitenant app (names like 'oauth' or 'App') with Mail.Read, Mail.ReadWrite, Mail.Send, Contacts.*, MailboxSettings.* or People.*; MailItemsAccessed and Send carry an AppId instead of an interactive client."
+    discriminator: "mail activity continues after the password reset and session revocation, and the client is an app, not a browser or Outlook. Disable the service principal first (accountEnabled false), then remove its credentials and grants — deleting first destroys the grant records. Full procedure: identity-breach-response scenario 4."
+    attack:
+      - "T1528"
+      - "T1671"
+      - "T1550.001"
+      - "T1114.002"
+    window: null
+criteria:
+  - id: "bec-response/defender/s1-successful-sign-ins-for-the-user-first-seen-per"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Successful sign-ins for the user, first seen per IP"
+    why: "The earliest sign-in from an IP the user never uses starts the access window; every later question (what was read, what was sent) is bounded by it. Export this result now: the 30-day Entra retention rolls off during the case."
+    how: null
+    fp: "Mobile carriers and VPN concentrators give the same user a new IP every day; judge on ASN and user agent, not on the IP alone. Non-interactive sign-ins from Microsoft service ranges (Exchange acting for Outlook) are normal and should not be read as attacker sessions."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d)
+      | where UserPrincipalName =~ "<upn>" and ResultType == "0"
+      | summarize FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated), SignIns=count(),
+          Apps=make_set(AppDisplayName, 10), Sessions=make_set(SessionId, 10)
+          by IPAddress, AutonomousSystemNumber, Location, UserAgent
+      | order by FirstSeen asc
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "bec-response/defender/s1-aitm-one-session-replayed-from-two-networks-mfa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "AiTM: one session replayed from two networks, MFA carried by the token"
+    why: "A proxy phishing kit (Tycoon 2FA, EvilProxy) steals the session cookie after the real MFA, so a password reset alone does not end the access. The tells are one SessionId used from two ASNs within minutes, sign-ins where MFA was “satisfied by claim in the token” from an IP the user has never used, and the Defender alerts “Stolen session cookie was used” and “Possible use of a stolen session cookie”."
+    how: null
+    fp: "A laptop moving from office Wi-Fi to a phone hotspot changes ASN mid-session; a replay shows two networks within the same minutes, one of them usually a hosting provider. “Satisfied by claim in the token” is normal for every token refresh on a device that did MFA once; it only matters from a new IP or ASN."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d)
+      | where UserPrincipalName =~ "<upn>" and ResultType == "0" and isnotempty(SessionId)
+      | summarize ASNs=dcount(AutonomousSystemNumber), IPs=make_set(IPAddress, 10),
+          First=min(TimeGenerated), Last=max(TimeGenerated) by SessionId
+      | where ASNs > 1
+      // MFA satisfied by a claim in the token rather than performed in this sign-in:
+      SigninLogs
+      | where TimeGenerated > ago(30d) and UserPrincipalName =~ "<upn>" and ResultType == "0"
+      | mv-expand step = AuthenticationDetails
+      | where tostring(step.authenticationStepResultDetail) == "MFA requirement satisfied by claim in the token"
+      | project TimeGenerated, IPAddress, AutonomousSystemNumber, AppDisplayName, SessionId, UserAgent
+      // The alerts, with the account and remote IP they carry:
+      AlertInfo
+      | where Timestamp > ago(30d)
+      | where Title in ("Stolen session cookie was used", "Possible use of a stolen session cookie",
+          "Authentication request from AiTM-related phishing page")
+      | join kind=inner (AlertEvidence | where AccountUpn =~ "<upn>") on AlertId
+      | project Timestamp, Title, Severity, EntityType, RemoteIP, AccountUpn
+    tested: null
+    attack:
+      - "T1557"
+      - "T1550.004"
+      - "T1539"
+  - id: "bec-response/defender/s1-victim-device-infostealer-or-fake-installer-befo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Victim device: infostealer or fake installer before first access"
+    why: "If the session cookie or password was stolen by malware on the laptop, a password reset is not enough: the device keeps stealing new ones until it is rebuilt."
+    how: null
+    fp: "Installers, updaters and portable tools run from Downloads and Temp all day; the lead is a binary the user cannot explain, launched shortly before the first foreign sign-in, with a SHA256 that is new to the tenant. Exclude the browsers, Teams and OneDrive updaters as above."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp between (datetime(<first access UTC>) - 14d .. datetime(<first access UTC>))
+      | where DeviceName =~ "<victim host>"
+      | where FolderPath has_any (@"\AppData\Local\Temp\", @"\Downloads\")
+      | where not(FileName in~ ("msedge.exe", "chrome.exe", "Teams.exe", "OneDrive.exe"))
+      | project Timestamp, FileName, FolderPath, ProcessCommandLine, SHA256, InitiatingProcessFileName
+      // Something other than the browser touching the browser's credential and cookie stores:
+      DeviceFileEvents
+      | where Timestamp between (datetime(<first access UTC>) - 14d .. datetime(<first access UTC>))
+      | where DeviceName =~ "<victim host>"
+      | where FolderPath has_any (@"\User Data\Default\Network\", @"\User Data\Default\") and FileName in~ ("Cookies", "Login Data", "Web Data")
+      | where not(InitiatingProcessFileName in~ ("msedge.exe", "chrome.exe", "brave.exe"))
+      | project Timestamp, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessSHA256
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1204.002"
+  - id: "bec-response/defender/s2-inbox-rules-and-mailbox-forwarding-created-or-ch"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Inbox rules and mailbox forwarding created or changed"
+    why: "The rule's creation time and client IP bound the access window and give an attacker IP to pivot on. Rules made in Outlook desktop arrive as UpdateInboxRules with the IP in Client_IPAddress; rules made on the web or in PowerShell arrive as New-InboxRule / Set-InboxRule with the IP in ClientIP and the target mailbox in OfficeObjectId (the UserId is whoever ran the cmdlet). Set-Mailbox only matters with a forwarding parameter."
+    how: null
+    fp: "Users make rules too. Attacker rules move mail to RSS Feeds, Archive or Deleted Items, delete it, or match on invoice, payment, bank or the attacker's own domain; names are often a single character or a full stop."
+    query: |-
+      OfficeActivity
+      | where TimeGenerated > ago(30d) and OfficeWorkload == "Exchange"
+      | where Operation in ("New-InboxRule", "Set-InboxRule", "Enable-InboxRule", "UpdateInboxRules", "Set-Mailbox")
+      | where Operation != "Set-Mailbox"
+          or Parameters has_any ("ForwardingSmtpAddress", "ForwardingAddress", "DeliverToMailboxAndForward")
+      | where UserId =~ "<upn>" or MailboxOwnerUPN =~ "<upn>" or OfficeObjectId has "<mailbox alias>"
+      | extend SourceIP = coalesce(Client_IPAddress, ClientIP)
+      | project TimeGenerated, Operation, UserId, OfficeObjectId, SourceIP, SessionId, Parameters, OperationProperties
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1114.003"
+      - "T1564.008"
+  - id: "bec-response/defender/s2-permissions-transport-rules-auto-reply-junk-sett"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Permissions, transport rules, auto-reply, junk settings and deletions from the attacker's IP"
+    why: "Delegate and SendAs permissions outlive a password reset; a tenant transport rule is a forwarding rule the mailbox owner never sees; an auto-reply or junk-list entry hides the victim's own replies; HardDelete and MoveToDeletedItems from the attacker's IP are the attacker cleaning the thread they hijacked."
+    how: null
+    fp: "Deletions by the owner from the office IP are the user tidying up; keep the IP and SessionId filter. Helpdesk staff grant FullAccess for leavers and shared mailboxes: a grant to a user who already exists, from an admin IP, with a ticket, is not the attacker."
+    query: |-
+      OfficeActivity
+      | where TimeGenerated > ago(30d) and OfficeWorkload == "Exchange"
+      | where Operation in ("Add-MailboxPermission", "Add-RecipientPermission", "Add-MailboxFolderPermission",
+          "Set-MailboxFolderPermission", "UpdateFolderPermissions", "New-TransportRule", "Set-TransportRule",
+          "Set-MailboxAutoReplyConfiguration", "Set-MailboxJunkEmailConfiguration",
+          "HardDelete", "SoftDelete", "MoveToDeletedItems")
+          or (Operation == "Set-Mailbox" and Parameters has "GrantSendOnBehalfTo")
+      | extend SourceIP = coalesce(Client_IPAddress, ClientIP)
+      | where UserId =~ "<upn>" or MailboxOwnerUPN =~ "<upn>" or OfficeObjectId has "<mailbox alias>"
+          or SourceIP in ("<ip1>", "<ip2>")
+      | project TimeGenerated, Operation, UserId, MailboxOwnerUPN, OfficeObjectId, SourceIP, SessionId,
+          Parameters, AffectedItems
+      | order by TimeGenerated asc
+    tested: null
+    attack:
+      - "T1098.002"
+      - "T1070.008"
+  - id: "bec-response/defender/s2-oauth-consent-granted-in-the-window-and-what-the"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "OAuth consent granted in the window, and what the app did with it"
+    why: "An app the user consented to keeps reading mail through Graph after every password reset and session revocation; it is removed by deleting the grant, not the credential. The consent is in the Entra audit log; the app's activity afterwards is in CloudAppEvents under its OAuthAppId."
+    how: null
+    fp: "Teams add-ins, Adobe, Zoom and signature tools ask for Mail.Read and offline_access legitimately. A grant to a multi-tenant app with no publisher verification, created minutes after a foreign sign-in, is the one to remove."
+    query: |-
+      AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where OperationName in ("Consent to application", "Add OAuth2PermissionGrant", "Add delegated permission grant",
+          "Add app role assignment grant to user", "Add service principal")
+      | where tostring(InitiatedBy.user.userPrincipalName) =~ "<upn>" or tostring(TargetResources) has "<upn>"
+      | mv-expand TargetResources
+      | project TimeGenerated, OperationName, Result, App=tostring(TargetResources.displayName),
+          ServicePrincipalId=tostring(TargetResources.id), InitiatedIP=tostring(InitiatedBy.user.ipAddress),
+          Changes=TargetResources.modifiedProperties
+      // The app id for the next query: Get-MgServicePrincipal -ServicePrincipalId <ServicePrincipalId> | select AppId
+      CloudAppEvents
+      | where Timestamp > ago(30d) and OAuthAppId == "<app id>"
+      | summarize Actions=count(), First=min(Timestamp), Last=max(Timestamp),
+          Users=make_set(AccountDisplayName, 20) by ActionType, IPAddress
+    tested: null
+    attack:
+      - "T1528"
+      - "T1550.001"
+  - id: "bec-response/defender/s3-mailitemsaccessed-in-the-attacker-s-sessions-dow"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Reading"
+    stage_ord: 3
+    platform: "Defender XDR / Sentinel"
+    title: "MailItemsAccessed in the attacker's sessions, down to the message ids"
+    why: "Sync access means the whole folder counts as read; Bind access lists each message. Pivot on the SessionId from stage 1 rather than on IP alone: the proxy kit changes IP, the session does not. The message-id list decides the personal-data notification and feeds the payment-thread hunt at stage 5. Throttling: more than 1,000 MailItemsAccessed records for one mailbox in 24 hours stops the logging for 24 hours, and the record that tripped it carries IsThrottled; a gap in the window is itself a finding, not an all-clear."
+    how: null
+    fp: "The user's own Outlook and phone sync whole folders every few minutes (ClientInfoString Outlook, Outlook-iOS, OutlookService); without the session or IP filter every message in the mailbox looks read."
+    query: |-
+      let attackerSessions = OfficeActivity
+      | where TimeGenerated > ago(30d) and Operation == "MailItemsAccessed" and MailboxOwnerUPN =~ "<upn>"
+      | where Client_IPAddress in ("<ip1>", "<ip2>") or SessionId in ("<session id from stage 1>")
+      | distinct SessionId;
+      OfficeActivity
+      | where TimeGenerated > ago(30d) and Operation == "MailItemsAccessed" and MailboxOwnerUPN =~ "<upn>"
+      | where SessionId in (attackerSessions) or Client_IPAddress in ("<ip1>", "<ip2>")
+      | mv-apply p = OperationProperties on (
+          summarize AccessType = take_anyif(tostring(p.Value), tostring(p.Name) == "MailAccessType"),
+                    Throttled  = take_anyif(tostring(p.Value), tostring(p.Name) == "IsThrottled"))
+      | mv-expand Folder = Folders
+      | mv-expand Item = Folder.FolderItems
+      | project TimeGenerated, SessionId, Client_IPAddress, ClientInfoString, AccessType, Throttled,
+          FolderPath = tostring(Folder.Path), InternetMessageId = tostring(Item.InternetMessageId)
+      | order by TimeGenerated asc
+      // Defender XDR only (30-day retention), the raw record uses ClientIPAddress, not ClientIP:
+      CloudAppEvents
+      | where Timestamp > ago(30d) and ActionType == "MailItemsAccessed" and AccountObjectId == "<user object id>"
+      | where tostring(RawEventData.ClientIPAddress) in ("<ip1>", "<ip2>") or tostring(RawEventData.SessionId) in ("<session id>")
+      | project Timestamp, RawEventData.SessionId, RawEventData.ClientIPAddress, RawEventData.OperationProperties, RawEventData.Folders
+    tested: null
+    attack:
+      - "T1114.002"
+  - id: "bec-response/defender/s4-mail-the-attacker-sent-from-the-real-mailbox-wit"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Impersonation"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "Mail the attacker sent from the real mailbox, with recipients"
+    why: "Send (owner), SendAs and SendOnBehalf (delegate) audit records carry the subject, client IP and session. Audit (Standard) has included Send and MailItemsAccessed since Microsoft's 2024 roll-out unless the mailbox's audit set was customised (check: Get-Mailbox <upn> | fl DefaultAuditSet, AuditOwner). Recipients are not in the audit record; EmailEvents (30 days) or a message trace give those. Drafts never send and never audit: the attacker's unsent drafts are found by opening the Drafts folder in a Content Search."
+    how: null
+    fp: "The user kept sending mail during the window. Separate the attacker's sends by Client_IPAddress and SessionId from stage 1, and by subject lines that reply to threads the attacker read at stage 3."
+    query: |-
+      OfficeActivity
+      | where TimeGenerated > ago(30d) and Operation in ("Send", "SendAs", "SendOnBehalf")
+      | where MailboxOwnerUPN =~ "<upn>" or UserId =~ "<upn>"
+      | project TimeGenerated, Operation, UserId, Client_IPAddress, SessionId, ClientInfoString,
+          Subject = tostring(Item.Subject), InternetMessageId = tostring(Item.InternetMessageId)
+      | order by TimeGenerated asc
+      // Recipients and delivery, from mail flow:
+      EmailEvents
+      | where Timestamp > ago(30d) and SenderFromAddress =~ "<upn>" and EmailDirection in ("Outbound", "Intra-org")
+      | project Timestamp, RecipientEmailAddress, Subject, SenderIPv4, InternetMessageId, NetworkMessageId, DeliveryAction
+      | order by Timestamp asc
+    tested: null
+    attack:
+      - "T1534"
+      - "T1684.001"
+  - id: "bec-response/defender/s4-lookalike-domains-writing-to-your-people-and-env"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Impersonation"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "Lookalike domains writing to your people, and envelope-versus-header mismatches"
+    why: "Generate the candidate list rather than guessing one: dnstwist -r on your own domain and on the top suppliers' domains, then match the list against SenderFromDomain. A second tell is the envelope sender domain (SenderMailFromDomain, P1) differing from the header From domain (SenderFromDomain, P2) on mail that claims a trusted domain. EmailEvents has no Reply-To column: for a Reply-To mismatch, run a Content Search on the recipients for the subject and read the headers of the.eml it returns."
+    how: null
+    fp: "Mailing-list, ticketing and marketing platforms set P1 to their own bounce domain on purpose; exclude the platforms your suppliers use and anything whose AuthenticationDetails shows DMARC pass."
+    query: |-
+      let lookalikes = dynamic(["<dnstwist domain 1>", "<dnstwist domain 2>"]);
+      EmailEvents
+      | where Timestamp > ago(30d)
+      | where SenderFromDomain in~ (lookalikes) or SenderMailFromDomain in~ (lookalikes)
+      | project Timestamp, SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress, Subject,
+          DeliveryAction, AuthenticationDetails
+      // Header From claims a trusted domain, the envelope does not:
+      EmailEvents
+      | where Timestamp > ago(30d) and EmailDirection == "Inbound"
+      | where SenderFromDomain in~ ("<your domain>", "<supplier domain>") and SenderMailFromDomain !~ SenderFromDomain
+      | summarize Messages=count(), Recipients=dcount(RecipientEmailAddress), Subjects=make_set(Subject, 5)
+          by SenderFromDomain, SenderMailFromDomain, SenderIPv4
+    tested: null
+    attack:
+      - "T1583.001"
+      - "T1684.001"
+  - id: "bec-response/defender/s5-payment-and-bank-detail-threads-in-the-window-ra"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Payment request"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "Payment and bank-detail threads in the window, ranked by what the attacker read"
+    why: "The payment request is a reply inside a thread the attacker already read. Join the message ids from the Bind records at stage 3 to EmailEvents, then widen with subject and attachment keywords for the same window; everything that comes back goes to finance by phone, with the attacker-read ones first."
+    how: null
+    fp: "A finance mailbox matches the keywords on most of its mail; the AttackerRead column is the ranking, the keywords only widen the net. Add your own ERP's subject prefixes and the Dutch or German terms your suppliers use."
+    query: |-
+      let keywords = dynamic(["invoice", "remittance", "payment", "wire", "IBAN", "bank details", "account change",
+          "overdue", "factuur", "betaling", "rekeningnummer"]);
+      let readIds = OfficeActivity
+      | where TimeGenerated > ago(30d) and Operation == "MailItemsAccessed" and MailboxOwnerUPN =~ "<upn>"
+      | where SessionId in ("<attacker session id>") or Client_IPAddress in ("<ip1>", "<ip2>")
+      | mv-expand Folder = Folders | mv-expand Item = Folder.FolderItems
+      | distinct InternetMessageId = tostring(Item.InternetMessageId);
+      EmailEvents
+      | where Timestamp between (datetime(<first access UTC>) .. datetime(<revocation time UTC>))
+      | where SenderFromAddress =~ "<upn>" or RecipientEmailAddress =~ "<upn>"
+      | join kind=leftouter (EmailAttachmentInfo | project NetworkMessageId, FileName, FileType) on NetworkMessageId
+      | where Subject has_any (keywords) or FileName has_any (keywords) or InternetMessageId in (readIds)
+      | extend AttackerRead = InternetMessageId in (readIds)
+      | project Timestamp, EmailDirection, SenderFromAddress, RecipientEmailAddress, Subject, FileName, AttackerRead
+      | order by AttackerRead desc, Timestamp asc
+    tested: null
+    attack:
+      - "T1684.001"
+      - "T1657"
+  - id: "bec-response/defender/s8-other-accounts-on-the-attacker-s-ips-or-sessions"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Wider targets"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Other accounts on the attacker's IPs or sessions; the same rule elsewhere"
+    why: "Attackers rarely take one mailbox. A second account on the same IP, or with the same rule shape, is a second incident that needs the same containment, in the same pass."
+    how: null
+    fp: "A shared egress IP (office NAT, the company VPN) puts every colleague on the attacker's IP; match on ASN plus user agent, or on the session, before adding an account to the eviction list."
+    query: |-
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d) and (IPAddress in ("<ip1>", "<ip2>") or AutonomousSystemNumber in (<asn>))
+      | where ResultType == "0"
+      | summarize FirstSeen=min(TimeGenerated), SignIns=count(), Apps=make_set(AppDisplayName, 5) by UserPrincipalName, IPAddress
+      // Same rule pattern or the same source in other mailboxes:
+      OfficeActivity
+      | where TimeGenerated > ago(30d) and Operation in ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules", "New-TransportRule")
+      | extend SourceIP = coalesce(Client_IPAddress, ClientIP)
+      | where Parameters has "<rule name or keyword>" or SourceIP in ("<ip1>", "<ip2>")
+      | summarize FirstSeen=min(TimeGenerated) by UserId, OfficeObjectId, Operation, SourceIP
+      // Internal recipients of the attacker's sends are the next victims: the stage 4 recipient list, filtered to your domain.
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1534"
+  - id: "bec-response/defender/s9-sign-ins-and-mailbox-activity-after-the-revocati"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Defender XDR / Sentinel"
+    title: "Sign-ins and mailbox activity after the revocation time"
+    why: "Access tokens issued before revocation keep working until they expire (60–90 min for ordinary clients; CAE-capable clients hold tokens up to 28 h but receive the revocation within minutes), and OfficeActivity arrives about an hour late, so a clean result in the first hour is not proof. Re-run at T+2h and T+24h. A success after revocation means a channel was missed: a registered device, an OAuth grant, a delegate, or the still-infected laptop."
+    how: null
+    fp: "The user's own devices reconnect the moment the account is re-enabled; a hit from a known device, known ASN and the fresh SessionId created at re-enrolment is expected. Anything from the attacker's ASN, or from a SessionId that predates the revocation, is not."
+    query: |-
+      let revoked = datetime(<revocation time UTC>);
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > revoked
+      | where UserPrincipalName in~ (<evicted upns>) and ResultType == "0"
+      | project TimeGenerated, Type, UserPrincipalName, IPAddress, AutonomousSystemNumber, AppDisplayName, UserAgent, SessionId
+      // Mailbox activity after revocation, from any IP (the attacker may have moved):
+      OfficeActivity
+      | where TimeGenerated > revoked and (UserId in~ (<evicted upns>) or MailboxOwnerUPN in~ (<evicted upns>))
+      | extend SourceIP = coalesce(Client_IPAddress, ClientIP)
+      | summarize Operations=make_set(Operation, 10), Count=count(), Last=max(TimeGenerated) by UserId, SourceIP, SessionId, ClientInfoString
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1550.004"
+  - id: "bec-response/crowdstrike/s1-successful-sign-ins-for-the-user-first-seen-per"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "CrowdStrike Falcon"
+    title: "Successful sign-ins for the user, first seen per IP"
+    why: "The earliest sign-in from an IP the user never uses starts the access window; every later question (what was read, what was sent) is bounded by it."
+    how: null
+    fp: "Mobile carriers and VPN concentrators give the same user a new IP every day; judge on ASN and user agent, not on the IP alone."
+    query: |-
+      // Entra sign-ins reach Next-Gen SIEM through the Microsoft connector; field names depend on its parser.
+      // Search the user over the last 30 days, open one sign-in event, and note the source-IP, ASN and result fields:
+      "<upn>"
+      // Then group on the fields you found, e.g.
+      // | groupBy([<source ip field>, <asn field>], function=[min(@timestamp, as=FirstSeen), max(@timestamp, as=LastSeen), count()])
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "bec-response/crowdstrike/s1-aitm-one-session-replayed-from-two-networks-mfa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "CrowdStrike Falcon"
+    title: "AiTM: one session replayed from two networks, MFA carried by the token"
+    why: "A proxy phishing kit steals the session cookie after the real MFA, so a password reset alone does not end the access. One session id from two ASNs within minutes, or a sign-in whose MFA was “satisfied by claim in the token” from a new IP, is the replay."
+    how: null
+    fp: "Office Wi-Fi to phone hotspot changes ASN mid-session; a replay shows two networks within the same minutes, one of them usually a hosting provider."
+    query: |-
+      // Find the session-id field in one parsed sign-in event, then:
+      "<upn>"
+      | groupBy([<session id field>], function=[count(<source ip field>, distinct=true, as=IPs), collect([<source ip field>, <asn field>])])
+      | IPs > 1
+      // MFA satisfied by the token rather than performed:
+      "<upn>" "MFA requirement satisfied by claim in the token"
+      // Identity Protection (with the Entra ID connector): Identity protection > Detections for the user.
+    tested: null
+    attack:
+      - "T1557"
+      - "T1550.004"
+      - "T1539"
+  - id: "bec-response/crowdstrike/s1-victim-device-infostealer-or-fake-installer-befo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "CrowdStrike Falcon"
+    title: "Victim device: infostealer or fake installer before first access"
+    why: "If the session cookie or password was stolen by malware on the laptop, a password reset is not enough: the device keeps stealing new ones until it is rebuilt."
+    how: null
+    fp: "Installers and updaters run from Downloads and Temp all day; the lead is a binary the user cannot explain, launched shortly before the first foreign sign-in, with a hash new to the estate. Exclude the browser, Teams and OneDrive updaters."
+    query: |-
+      #event_simpleName=ProcessRollup2 ComputerName="<victim host>"
+      | ImageFileName=/\\(AppData\\Local\\Temp|Downloads)\\/i
+      | table([@timestamp, UserName, ImageFileName, CommandLine, SHA256HashData])
+      // Also: Endpoint security > Detections, filter on the host, tactic Credential Access.
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1204.002"
+  - id: "bec-response/crowdstrike/s2-inbox-rules-forwarding-permissions-transport-rul"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "CrowdStrike Falcon"
+    title: "Inbox rules, forwarding, permissions, transport rules and deletions"
+    why: "The rule's creation time and client IP bound the access window and give an attacker IP to pivot on. In the raw audit JSON, Outlook-made rules (UpdateInboxRules) carry the IP in ClientIPAddress and cmdlet records (New-InboxRule, Set-Mailbox) carry it in ClientIP with the target mailbox in ObjectId; delegate grants, transport rules, auto-replies and deletions from the attacker's IP are the same hunt."
+    how: null
+    fp: "Users make rules and helpdesk staff grant FullAccess for leavers; a grant from an admin IP with a ticket is not the attacker. Attacker rules move mail to RSS Feeds or Archive, or delete it, and match on invoice, payment or bank."
+    query: |-
+      // Free text plus a regex over all fields; works whatever the parser named the fields.
+      "<upn>" /New-InboxRule|Set-InboxRule|UpdateInboxRules|Add-MailboxPermission|Add-RecipientPermission|Add-MailboxFolderPermission|New-TransportRule|Set-TransportRule|Set-MailboxAutoReplyConfiguration|Set-MailboxJunkEmailConfiguration|HardDelete|MoveToDeletedItems/
+      // Set-Mailbox only with a forwarding or send-on-behalf parameter:
+      "<upn>" "Set-Mailbox" /ForwardingSmtpAddress|ForwardingAddress|DeliverToMailboxAndForward|GrantSendOnBehalfTo/
+      // Read ClientIPAddress / ClientIP, ObjectId, SessionId and Parameters from the matching events.
+    tested: null
+    attack:
+      - "T1114.003"
+      - "T1564.008"
+      - "T1098.002"
+      - "T1070.008"
+  - id: "bec-response/crowdstrike/s2-oauth-consent-granted-in-the-window"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "CrowdStrike Falcon"
+    title: "OAuth consent granted in the window"
+    why: "An app the user consented to keeps reading mail through Graph after every reset and revocation; it is removed by deleting the grant. The consent record is in the Entra audit feed."
+    how: null
+    fp: "Teams add-ins, Adobe, Zoom and signature tools ask for Mail.Read legitimately; a multi-tenant app without publisher verification consented minutes after a foreign sign-in is the one to remove."
+    query: |-
+      "<upn>" /Consent to application|Add OAuth2PermissionGrant|Add delegated permission grant|Add app role assignment grant to user/
+      // Note the app display name and service-principal id in the target resource; remove the grant in Respond (T+20-35).
+    tested: null
+    attack:
+      - "T1528"
+      - "T1550.001"
+  - id: "bec-response/crowdstrike/s3-mailitemsaccessed-in-the-attacker-s-sessions-dow"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Reading"
+    stage_ord: 3
+    platform: "CrowdStrike Falcon"
+    title: "MailItemsAccessed in the attacker's sessions, down to the message ids"
+    why: "Sync access means the whole folder counts as read; Bind access lists each message. Pivot on the SessionId from stage 1, not only the IP. More than 1,000 MailItemsAccessed records in 24 hours stops the logging for 24 hours (IsThrottled in OperationProperties): a gap in the window is a finding, not an all-clear."
+    how: null
+    fp: "The user's own Outlook and phone sync whole folders every few minutes; without the session or IP filter every message looks read."
+    query: |-
+      "<upn>" "MailItemsAccessed" ("<attacker ip>" OR "<attacker session id>")
+      // In each event: OperationProperties (MailAccessType Bind or Sync, IsThrottled), SessionId, ClientInfoString,
+      // and Folders[].FolderItems[].InternetMessageId for the message list that feeds stage 5.
+    tested: null
+    attack:
+      - "T1114.002"
+  - id: "bec-response/crowdstrike/s4-mail-sent-as-the-user-and-mail-from-a-lookalike"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Impersonation"
+    stage_ord: 4
+    platform: "CrowdStrike Falcon"
+    title: "Mail sent as the user, and mail from a lookalike domain"
+    why: "Everyone the attacker wrote to, from the real mailbox or a lookalike, has to be warned by phone before they act on it. Send, SendAs and SendOnBehalf records carry the subject and client IP (Audit Standard includes Send since 2024); recipients and the lookalike list come from a message trace, with the candidate domains generated by dnstwist rather than guessed."
+    how: null
+    fp: "The user kept sending mail during the window; separate the attacker's sends by client IP and session from stage 1."
+    query: |-
+      "<upn>" /"Operation"\s*:\s*"Send(As|OnBehalf)?"/
+      // Subject and InternetMessageId are under Item in the raw JSON. Recipients and lookalikes: message trace in the
+      // Exchange admin center, SenderAddress domain matched against the dnstwist output.
+    tested: null
+    attack:
+      - "T1534"
+      - "T1684.001"
+      - "T1583.001"
+  - id: "bec-response/crowdstrike/s8-other-accounts-on-the-attacker-s-ips-the-stealer"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Wider targets"
+    stage_ord: 8
+    platform: "CrowdStrike Falcon"
+    title: "Other accounts on the attacker's IPs; the stealer on other hosts"
+    why: "Attackers rarely take one mailbox. A second account on the same IP or with the same rule name is a second incident that needs the same containment."
+    how: null
+    fp: "A shared egress IP (office NAT, the company VPN) puts every colleague on the attacker's IP; match on ASN plus user agent, or on the session, before adding an account to the eviction list."
+    query: |-
+      "<ip1>"
+      // Group on the user field of the parsed Microsoft events, e.g. | groupBy([<user field>])
+      // Endpoint: the stealer binary found at stage 1 on any other host:
+      #event_simpleName=ProcessRollup2 | SHA256HashData="<sha256>" OR ImageFileName=/<stealer file name>/i
+      | groupBy([ComputerName, UserName])
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1534"
+  - id: "bec-response/crowdstrike/s9-sign-ins-and-mailbox-activity-after-the-revocati"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "CrowdStrike Falcon"
+    title: "Sign-ins and mailbox activity after the revocation time"
+    why: "Access tokens issued before revocation live until they expire (60–90 min; up to 28 h on CAE-capable clients, which do receive the revocation), and the audit feed arrives about an hour late, so a clean result in the first hour is not proof. Re-run at T+2h and T+24h. A success after revocation means a channel was missed."
+    how: null
+    fp: "The user's own devices reconnect the moment the account is re-enabled; a known device and ASN with a fresh session id is expected, the attacker's ASN or a pre-revocation session id is not."
+    query: |-
+      // Set the time picker to start at the revocation time.
+      "<upn>" ("<attacker ip>" OR "<attacker asn>" OR "<attacker session id>")
+      // Any hit after revocation: the session is still in use. Check the victim host again with the stage 1 device hunt.
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1550.004"
+  - id: "bec-response/sentinelone/s1-successful-sign-ins-for-the-user-first-seen-per"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "SentinelOne"
+    title: "Successful sign-ins for the user, first seen per IP"
+    why: "The earliest sign-in from an IP the user never uses starts the access window; every later question (what was read, what was sent) is bounded by it."
+    how: null
+    fp: "Mobile carriers and VPN concentrators give the same user a new IP every day; judge on ASN and user agent, not on the IP alone."
+    query: |-
+      // Which data sources carry the user at all:
+      * contains '<upn>'
+      | group ct = count() by dataSource.name
+      // Then dump one sign-in event to find the source-IP, ASN, session and result fields for this tenant:
+      dataSource.name = '<m365_source>' | limit 1 | columns *
+      // and group: dataSource.name = '<m365_source>' <user_field> contains:anycase '<upn>' | group first = min(timestamp), ct = count() by <source ip field>
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "bec-response/sentinelone/s1-aitm-one-session-replayed-from-two-networks-mfa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "SentinelOne"
+    title: "AiTM: one session replayed from two networks, MFA carried by the token"
+    why: "A proxy phishing kit steals the session cookie after the real MFA, so a password reset alone does not end the access. One session id from two IPs or ASNs within minutes, or a sign-in whose MFA was “satisfied by claim in the token” from a new IP, is the replay."
+    how: null
+    fp: "Office Wi-Fi to phone hotspot changes ASN mid-session; a replay shows two networks within the same minutes, one of them usually a hosting provider."
+    query: |-
+      dataSource.name = '<m365_source>' <user_field> contains:anycase '<upn>'
+      | group ips = estimate_distinct(<source ip field>) by <session id field>
+      | filter ips > 1
+      // MFA satisfied by the token rather than performed:
+      dataSource.name = '<m365_source>' <user_field> contains:anycase '<upn>' message contains 'MFA requirement satisfied by claim in the token'
+      | columns timestamp, <source ip field>, <session id field>
+    tested: null
+    attack:
+      - "T1557"
+      - "T1550.004"
+      - "T1539"
+  - id: "bec-response/sentinelone/s1-victim-device-infostealer-or-fake-installer-befo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "SentinelOne"
+    title: "Victim device: infostealer or fake installer before first access"
+    why: "If the session cookie or password was stolen by malware on the laptop, a password reset is not enough: the device keeps stealing new ones until it is rebuilt."
+    how: null
+    fp: "Installers and updaters run from Downloads and AppData all day; the lead is a binary the user cannot explain, launched shortly before the first foreign sign-in, with a hash new to the estate."
+    query: |-
+      indicator.category contains 'InfoStealer' AND endpoint.name = '<victim host>'
+      | columns event.time, src.process.name, src.process.cmdline
+      // Binaries started from user-writable folders on the same host:
+      event.type = 'Process Creation' AND endpoint.name = '<victim host>' AND tgt.process.image.path contains ('AppData','Downloads')
+      | columns event.time, tgt.process.name, tgt.process.image.path, tgt.process.cmdline, tgt.process.image.sha256
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1204.002"
+  - id: "bec-response/sentinelone/s2-inbox-rules-forwarding-permissions-transport-rul"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "SentinelOne"
+    title: "Inbox rules, forwarding, permissions, transport rules and deletions"
+    why: "The rule's creation time and client IP bound the access window and give an attacker IP to pivot on. In the raw audit JSON, Outlook-made rules (UpdateInboxRules) carry the IP in ClientIPAddress and cmdlet records carry it in ClientIP with the target mailbox in ObjectId; delegate grants, transport rules, auto-replies and deletions from the attacker's IP are the same hunt."
+    how: null
+    fp: "Users make rules and helpdesk staff grant FullAccess for leavers; a grant from an admin IP with a ticket is not the attacker."
+    query: |-
+      dataSource.name = '<m365_source>'
+        <operation_field> in ('New-InboxRule','Set-InboxRule','UpdateInboxRules','Add-MailboxPermission','Add-RecipientPermission',
+          'Add-MailboxFolderPermission','New-TransportRule','Set-TransportRule','Set-MailboxAutoReplyConfiguration',
+          'Set-MailboxJunkEmailConfiguration','HardDelete','MoveToDeletedItems')
+        <user_field> contains:anycase '<upn>'
+      | columns timestamp, <operation_field>, message
+      // Set-Mailbox only with a forwarding parameter:
+      dataSource.name = '<m365_source>' <operation_field> = 'Set-Mailbox' message contains ('ForwardingSmtpAddress','ForwardingAddress','DeliverToMailboxAndForward','GrantSendOnBehalfTo')
+      // Rule parameters, ClientIPAddress / ClientIP, ObjectId and SessionId are inside the JSON message field.
+    tested: null
+    attack:
+      - "T1114.003"
+      - "T1564.008"
+      - "T1098.002"
+      - "T1070.008"
+  - id: "bec-response/sentinelone/s2-oauth-consent-granted-in-the-window"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "SentinelOne"
+    title: "OAuth consent granted in the window"
+    why: "An app the user consented to keeps reading mail through Graph after every reset and revocation; it is removed by deleting the grant."
+    how: null
+    fp: "Teams add-ins, Adobe, Zoom and signature tools ask for Mail.Read legitimately; a multi-tenant app without publisher verification consented minutes after a foreign sign-in is the one to remove."
+    query: |-
+      dataSource.name = '<m365_source>' <user_field> contains:anycase '<upn>'
+        message contains ('Consent to application','Add OAuth2PermissionGrant','Add delegated permission grant','Add app role assignment grant to user')
+      | columns timestamp, message
+    tested: null
+    attack:
+      - "T1528"
+      - "T1550.001"
+  - id: "bec-response/sentinelone/s3-mailitemsaccessed-in-the-attacker-s-sessions-dow"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Reading"
+    stage_ord: 3
+    platform: "SentinelOne"
+    title: "MailItemsAccessed in the attacker's sessions, down to the message ids"
+    why: "Sync access means the whole folder counts as read; Bind access lists each message. Pivot on the SessionId from stage 1, not only the IP. More than 1,000 MailItemsAccessed records in 24 hours stops the logging for 24 hours (IsThrottled in OperationProperties): a gap in the window is a finding, not an all-clear."
+    how: null
+    fp: "The user's own Outlook and phone sync whole folders every few minutes; without the session or IP filter every message looks read."
+    query: |-
+      dataSource.name = '<m365_source>'
+        <operation_field> = 'MailItemsAccessed'
+        <user_field> contains:anycase '<upn>'
+        message contains ('<attacker ip>','<attacker session id>')
+      | columns timestamp, message
+      // MailAccessType, IsThrottled, SessionId and Folders[].FolderItems[].InternetMessageId are inside the JSON message field.
+    tested: null
+    attack:
+      - "T1114.002"
+  - id: "bec-response/sentinelone/s4-mail-sent-as-the-user-and-mail-from-a-lookalike"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Impersonation"
+    stage_ord: 4
+    platform: "SentinelOne"
+    title: "Mail sent as the user, and mail from a lookalike domain"
+    why: "Everyone the attacker wrote to, from the real mailbox or a lookalike, has to be warned by phone before they act on it. Send, SendAs and SendOnBehalf records carry the subject and client IP (Audit Standard includes Send since 2024); recipients and lookalikes come from a message trace, with candidate domains from dnstwist."
+    how: null
+    fp: "The user kept sending mail during the window; separate the attacker's sends by client IP and session from stage 1."
+    query: |-
+      dataSource.name = '<m365_source>'
+        <operation_field> in ('Send','SendAs','SendOnBehalf')
+        <user_field> contains:anycase '<upn>'
+      | columns timestamp, <operation_field>, message
+      // Item.Subject and Item.InternetMessageId are in the JSON message field. Recipients: message trace in the Exchange admin center.
+    tested: null
+    attack:
+      - "T1534"
+      - "T1684.001"
+      - "T1583.001"
+  - id: "bec-response/sentinelone/s8-other-accounts-on-the-attacker-s-ips-the-stealer"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Wider targets"
+    stage_ord: 8
+    platform: "SentinelOne"
+    title: "Other accounts on the attacker's IPs; the stealer on other hosts"
+    why: "Attackers rarely take one mailbox. A second account on the same IP or with the same rule name is a second incident that needs the same containment."
+    how: null
+    fp: "A shared egress IP (office NAT, the company VPN) puts every colleague on the attacker's IP; match on ASN plus user agent, or on the session, before adding an account to the eviction list."
+    query: |-
+      * contains '<ip1>'
+      | group ct = count() by dataSource.name, <user_field>
+      // Endpoint: the stealer anywhere in the fleet:
+      tgt.process.image.sha256 = '<sha256>' OR indicator.category contains 'InfoStealer'
+      | group Hits = count() by endpoint.name
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1534"
+  - id: "bec-response/sentinelone/s9-sign-ins-and-mailbox-activity-after-the-revocati"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "SentinelOne"
+    title: "Sign-ins and mailbox activity after the revocation time"
+    why: "Access tokens issued before revocation live until they expire (60–90 min; up to 28 h on CAE-capable clients, which do receive the revocation), and the audit feed arrives about an hour late, so a clean result in the first hour is not proof. Re-run at T+2h and T+24h."
+    how: null
+    fp: "The user's own devices reconnect the moment the account is re-enabled; a known device and ASN with a fresh session id is expected, the attacker's ASN or a pre-revocation session id is not."
+    query: |-
+      // Set the time range to start at the revocation time.
+      dataSource.name = '<m365_source>' <user_field> contains:anycase '<upn>'
+      | group ct = count() by <source ip field>, <session id field>
+      // And the victim device, still infected?
+      indicator.category contains 'InfoStealer' AND endpoint.name = '<victim host>'
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1550.004"
+  - id: "bec-response/velociraptor/s1-victim-device-phishing-page-visited-infostealer"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Velociraptor"
+    title: "Victim device: phishing page visited, infostealer or fake installer before first access"
+    why: "If the session cookie or password was stolen by malware on the laptop, a password reset is not enough: the device keeps stealing new ones until it is rebuilt. If the browser history shows the proxy phishing page just before the first foreign sign-in, the cookie was replayed and the device is clean: the eviction has to kill the session, not the laptop."
+    how: null
+    fp: "Installers and updaters are new binaries too; the lead is a binary the user cannot explain, run shortly before the first foreign sign-in, with a hash new to the estate."
+    query: |-
+      Collect on the victim's device:
+      Windows.Applications.Chrome.History     (Chrome, Edge, Brave, Vivaldi, Opera profiles)
+        URLRegex  = (?i)<phishing or lookalike domain>   (or leave empty and read the visits just before first access)
+      Windows.Forensics.Prefetch
+        dateAfter = <14 days before first access>        (new binaries: stealer, fake installer, cracked tool)
+      Windows.System.Amcache
+        (first-execution times for the same window)
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1204.002"
+      - "T1557"
+  - id: "bec-response/velociraptor/s8-the-stealer-on-any-other-host"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Wider targets"
+    stage_ord: 8
+    platform: "Velociraptor"
+    title: "The stealer on any other host"
+    why: "Attackers rarely take one mailbox. The same stealer on a second laptop is a second compromised account that needs the same containment, in the same pass."
+    how: null
+    fp: "Portable tools (7-Zip, PuTTY, Rufus) match Prefetch and Pslist by name on many hosts; confirm on hash with FileFinder before quarantining a host."
+    query: |-
+      Hunt across all clients for the binary found on the victim's device:
+      Windows.Forensics.Prefetch
+        binaryRegex = (?i)<stealer file name>
+      Windows.System.Pslist
+        ProcessRegex = (?i)<stealer file name>
+      Windows.Search.FileFinder
+        SearchFilesGlob = C:\Users\*\{AppData\Local\Temp,Downloads}\**
+        Calculate_Hash  = Y        (then filter the SHA256 column on the hash from stage 1)
+    tested: null
+    attack:
+      - "T1555.003"
+  - id: "bec-response/velociraptor/s9-the-stealer-still-running-on-the-victim-s-device"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Velociraptor"
+    title: "The stealer still running on the victim's device after revocation"
+    why: "No view of sessions; the endpoint check is whether the stealer still runs, or anything new ran after the revocation time. If it does, the new password and the fresh MFA enrolment are already stolen."
+    how: null
+    fp: "A rebuild in progress runs installers after the revocation time; compare against the build's software list."
+    query: |-
+      Windows.System.Pslist
+        ProcessRegex = (?i)<stealer file name>
+      Windows.Forensics.Prefetch
+        dateAfter = <revocation time>
+    tested: null
+    attack:
+      - "T1555.003"
+  - id: "bec-response/splunk/s1-successful-sign-ins-for-the-user-first-seen-per"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Splunk"
+    title: "Successful sign-ins for the user, first seen per IP"
+    why: "The earliest sign-in from an IP the user never uses starts the access window; every later question (what was read, what was sent) is bounded by it."
+    how: null
+    fp: "Mobile carriers and VPN concentrators give the same user a new IP every day; judge on ASN and user agent, not on the IP alone."
+    query: |-
+      sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs) user="<upn>" action=success
+      | stats min(_time) as first_seen max(_time) as last_seen count values(properties.userAgent) as user_agent
+          values(properties.sessionId) as sessions by src properties.autonomousSystemNumber
+      | sort first_seen | convert ctime(first_seen) ctime(last_seen)
+      // Without the Cloud Services add-on (interactive sign-ins only):
+      // sourcetype=o365:management:activity Workload=AzureActiveDirectory Operation=UserLoggedIn UserId="<upn>" | stats min(_time) by ClientIP
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "bec-response/splunk/s1-aitm-one-session-replayed-from-two-networks-mfa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Splunk"
+    title: "AiTM: one session replayed from two networks, MFA carried by the token"
+    why: "A proxy phishing kit steals the session cookie after the real MFA, so a password reset alone does not end the access. One sessionId from two ASNs within minutes, or a sign-in whose MFA step reads “MFA requirement satisfied by claim in the token” from a new IP, is the replay."
+    how: null
+    fp: "Office Wi-Fi to phone hotspot changes ASN mid-session; a replay shows two networks within the same minutes, one of them usually a hosting provider. “Satisfied by claim in the token” is normal on a device that did MFA once; it matters only from a new IP or ASN."
+    query: |-
+      sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs) user="<upn>" action=success
+      | stats dc(properties.autonomousSystemNumber) as asns values(src) as ips min(_time) as first max(_time) as last by properties.sessionId
+      | where asns > 1 | convert ctime(first) ctime(last)
+      // MFA satisfied by the token rather than performed:
+      sourcetype=azure:monitor:aad category=SignInLogs user="<upn>" action=success
+      | spath output=step path=properties.authenticationDetails{}.authenticationStepResultDetail
+      | search step="MFA requirement satisfied by claim in the token"
+      | table _time src properties.autonomousSystemNumber properties.appDisplayName properties.sessionId properties.userAgent
+    tested: null
+    attack:
+      - "T1557"
+      - "T1550.004"
+      - "T1539"
+  - id: "bec-response/splunk/s1-victim-device-infostealer-or-fake-installer-befo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Splunk"
+    title: "Victim device: infostealer or fake installer before first access"
+    why: "If the session cookie or password was stolen by malware on the laptop, a password reset is not enough: the device keeps stealing new ones until it is rebuilt."
+    how: null
+    fp: "Installers and updaters run from Downloads and Temp all day; the lead is a binary the user cannot explain, launched shortly before the first foreign sign-in, with a hash new to the estate."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 host="<victim host>"
+        (Image="*\\AppData\\Local\\Temp\\*" OR Image="*\\Downloads\\*")
+        NOT Image IN ("*\\msedge.exe", "*\\chrome.exe", "*\\Teams.exe", "*\\OneDrive.exe")
+      | table _time User Image CommandLine Hashes ParentImage
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1204.002"
+  - id: "bec-response/splunk/s2-inbox-rules-and-mailbox-forwarding-created-or-ch"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "Inbox rules and mailbox forwarding created or changed"
+    why: "The rule's creation time and client IP bound the access window and give an attacker IP to pivot on. Rules made in Outlook desktop arrive as UpdateInboxRules with the IP in ClientIPAddress; cmdlet records (New-InboxRule, Set-InboxRule, Set-Mailbox) carry it in ClientIP with the target mailbox in ObjectId (UserId is whoever ran the cmdlet). Set-Mailbox only matters with a forwarding parameter."
+    how: null
+    fp: "Users make rules too. Attacker rules move mail to RSS Feeds, Archive or Deleted Items, delete it, or match on invoice, payment, bank or the attacker's own domain."
+    query: |-
+      sourcetype=o365:management:activity Workload=Exchange
+        Operation IN ("New-InboxRule", "Set-InboxRule", "Enable-InboxRule", "UpdateInboxRules", "Set-Mailbox")
+        (UserId="<upn>" OR MailboxOwnerUPN="<upn>" OR ObjectId="*<mailbox alias>*")
+      | search NOT (Operation="Set-Mailbox" AND NOT Parameters{}.Name IN ("ForwardingSmtpAddress", "ForwardingAddress", "DeliverToMailboxAndForward"))
+      | eval src_ip=coalesce(ClientIPAddress, ClientIP)
+      | table _time Operation UserId ObjectId src_ip SessionId Parameters{}.Name Parameters{}.Value
+    tested: null
+    attack:
+      - "T1114.003"
+      - "T1564.008"
+  - id: "bec-response/splunk/s2-permissions-transport-rules-auto-reply-junk-sett"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "Permissions, transport rules, auto-reply, junk settings and deletions from the attacker's IP"
+    why: "Delegate and SendAs permissions outlive a password reset; a transport rule is a forwarding rule the mailbox owner never sees; an auto-reply or junk-list entry hides the victim's replies; HardDelete and MoveToDeletedItems from the attacker's IP are the attacker cleaning the hijacked thread."
+    how: null
+    fp: "Deletions by the owner from the office IP are the user tidying up; keep the IP and SessionId filter. A FullAccess grant from an admin IP with a ticket is not the attacker."
+    query: |-
+      sourcetype=o365:management:activity Workload=Exchange
+        (Operation IN ("Add-MailboxPermission", "Add-RecipientPermission", "Add-MailboxFolderPermission", "Set-MailboxFolderPermission",
+          "UpdateFolderPermissions", "New-TransportRule", "Set-TransportRule", "Set-MailboxAutoReplyConfiguration",
+          "Set-MailboxJunkEmailConfiguration", "HardDelete", "SoftDelete", "MoveToDeletedItems")
+         OR (Operation="Set-Mailbox" AND Parameters{}.Name="GrantSendOnBehalfTo"))
+      | eval src_ip=coalesce(ClientIPAddress, ClientIP)
+      | search (UserId="<upn>" OR MailboxOwnerUPN="<upn>" OR ObjectId="*<mailbox alias>*" OR src_ip IN ("<ip1>", "<ip2>"))
+      | table _time Operation UserId MailboxOwnerUPN ObjectId src_ip SessionId Parameters{}.Name Parameters{}.Value AffectedItems{}.Subject
+    tested: null
+    attack:
+      - "T1098.002"
+      - "T1070.008"
+  - id: "bec-response/splunk/s2-oauth-consent-granted-in-the-window"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "OAuth consent granted in the window"
+    why: "An app the user consented to keeps reading mail through Graph after every reset and revocation; it is removed by deleting the grant. In the UAL feed the Entra operations carry a trailing full stop."
+    how: null
+    fp: "Teams add-ins, Adobe, Zoom and signature tools ask for Mail.Read legitimately; a multi-tenant app without publisher verification consented minutes after a foreign sign-in is the one to remove."
+    query: |-
+      sourcetype=o365:management:activity Workload=AzureActiveDirectory
+        Operation IN ("Consent to application.", "Add OAuth2PermissionGrant.", "Add delegated permission grant.", "Add app role assignment grant to user.", "Add service principal.")
+        (UserId="<upn>" OR Target{}.ID="*<upn>*")
+      | table _time Operation UserId ActorIpAddress Target{}.ID ModifiedProperties{}.Name ModifiedProperties{}.NewValue
+    tested: null
+    attack:
+      - "T1528"
+      - "T1550.001"
+  - id: "bec-response/splunk/s3-mailitemsaccessed-in-the-attacker-s-sessions-dow"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Reading"
+    stage_ord: 3
+    platform: "Splunk"
+    title: "MailItemsAccessed in the attacker's sessions, down to the message ids"
+    why: "Sync access means the whole folder counts as read; Bind access lists each message. Pivot on the SessionId from stage 1, not only the IP. More than 1,000 MailItemsAccessed records in 24 hours stops the logging for 24 hours (IsThrottled in OperationProperties): a gap in the window is a finding, not an all-clear."
+    how: null
+    fp: "The user's own Outlook and phone sync whole folders every few minutes; without the session or IP filter every message looks read."
+    query: |-
+      sourcetype=o365:management:activity Workload=Exchange Operation=MailItemsAccessed MailboxOwnerUPN="<upn>"
+        (ClientIPAddress IN ("<ip1>", "<ip2>") OR SessionId IN ("<attacker session id>"))
+      | spath output=access_type path=OperationProperties{}.Value
+      | spath output=msg_ids path=Folders{}.FolderItems{}.InternetMessageId
+      | spath output=folders path=Folders{}.Path
+      | stats count min(_time) as first_seen max(_time) as last_seen values(ClientInfoString) as client
+          values(access_type) as access_type values(folders) as folders values(msg_ids) as message_ids by ClientIPAddress SessionId
+      | convert ctime(first_seen) ctime(last_seen)
+    tested: null
+    attack:
+      - "T1114.002"
+  - id: "bec-response/splunk/s4-mail-sent-as-the-user-and-mail-from-a-lookalike"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Impersonation"
+    stage_ord: 4
+    platform: "Splunk"
+    title: "Mail sent as the user, and mail from a lookalike domain"
+    why: "Everyone the attacker wrote to, from the real mailbox or a lookalike, has to be warned by phone before they act on it. Send, SendAs and SendOnBehalf records carry the subject and client IP (Audit Standard includes Send since 2024); recipients come from the message trace, and lookalikes are matched against a dnstwist list rather than one guessed domain. Reply-To is in neither source: read it from the.eml headers in a Content Search."
+    how: null
+    fp: "The user kept sending mail during the window; separate the attacker's sends by client IP and session from stage 1. Trim the dnstwist output of registered-but-parked domains your own staff mistype."
+    query: |-
+      sourcetype=o365:management:activity Workload=Exchange Operation IN ("Send", "SendAs", "SendOnBehalf") (MailboxOwnerUPN="<upn>" OR UserId="<upn>")
+      | table _time Operation UserId ClientIPAddress SessionId Item.Subject Item.InternetMessageId
+      // Recipients (message trace; field names are camelCase on o365:graph:messagetrace):
+      sourcetype IN (o365:graph:messagetrace, o365:reporting:messagetrace) SenderAddress="<upn>" | table _time RecipientAddress Subject Status
+      // Lookalikes writing to your people, from a dnstwist lookup file:
+      sourcetype IN (o365:graph:messagetrace, o365:reporting:messagetrace)
+      | eval sender_domain=lower(mvindex(split(SenderAddress, "@"), 1))
+      | lookup dnstwist_<yourdomain>.csv domain as sender_domain OUTPUT domain as lookalike
+      | where isnotnull(lookalike) | table _time SenderAddress RecipientAddress Subject Status
+    tested: null
+    attack:
+      - "T1534"
+      - "T1684.001"
+      - "T1583.001"
+  - id: "bec-response/splunk/s5-payment-and-bank-detail-threads-in-the-window-ra"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Payment request"
+    stage_ord: 5
+    platform: "Splunk"
+    title: "Payment and bank-detail threads in the window, ranked by what the attacker read"
+    why: "The payment request is a reply inside a thread the attacker already read. Match the message trace in the window against the message ids from the Bind records at stage 3, then widen with subject keywords; everything that comes back goes to finance by phone, attacker-read first."
+    how: null
+    fp: "A finance mailbox matches the keywords on most of its mail; attacker_read is the ranking, the keywords only widen the net. Attachments are not in the trace; a Content Search covers those."
+    query: |-
+      sourcetype IN (o365:graph:messagetrace, o365:reporting:messagetrace) (SenderAddress="<upn>" OR RecipientAddress="<upn>")
+        earliest="<MM/DD/YYYY:HH:MM:SS first access>" latest="<MM/DD/YYYY:HH:MM:SS revocation>"
+      | eval attacker_read=if(match(MessageId, "<id 1>|<id 2>"), 1, 0)
+      | search attacker_read=1 OR Subject IN ("*invoice*", "*remittance*", "*payment*", "*wire*", "*IBAN*", "*bank details*", "*factuur*", "*betaling*", "*rekeningnummer*")
+      | table _time SenderAddress RecipientAddress Subject attacker_read | sort -attacker_read _time
+    tested: null
+    attack:
+      - "T1684.001"
+      - "T1657"
+  - id: "bec-response/splunk/s8-other-accounts-on-the-attacker-s-ips-the-same-ru"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Wider targets"
+    stage_ord: 8
+    platform: "Splunk"
+    title: "Other accounts on the attacker's IPs; the same rule elsewhere"
+    why: "Attackers rarely take one mailbox. A second account on the same IP or with the same rule name is a second incident that needs the same containment."
+    how: null
+    fp: "A shared egress IP (office NAT, the company VPN) puts every colleague on the attacker's IP; match on ASN plus user agent, or on the session, before adding an account to the eviction list."
+    query: |-
+      sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs) (src IN ("<ip1>", "<ip2>") OR properties.autonomousSystemNumber=<asn>) action=success
+      | stats min(_time) as first_seen count by user src | convert ctime(first_seen)
+      // Same rule pattern or source in other mailboxes:
+      sourcetype=o365:management:activity Operation IN ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules", "New-TransportRule")
+      | eval src_ip=coalesce(ClientIPAddress, ClientIP)
+      | search "<rule name or keyword>" OR src_ip IN ("<ip1>", "<ip2>")
+      | stats min(_time) as first_seen by UserId ObjectId src_ip
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1534"
+  - id: "bec-response/splunk/s9-sign-ins-and-mailbox-activity-after-the-revocati"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Splunk"
+    title: "Sign-ins and mailbox activity after the revocation time"
+    why: "Access tokens issued before revocation live until they expire (60–90 min; up to 28 h on CAE-capable clients, which do receive the revocation), and the UAL feed arrives about an hour late, so a clean result in the first hour is not proof. Re-run at T+2h and T+24h. A success after revocation means a channel was missed."
+    how: null
+    fp: "The user's own devices reconnect the moment the account is re-enabled; a known device and ASN with a fresh session id is expected, the attacker's ASN or a pre-revocation session id is not."
+    query: |-
+      sourcetype=azure:monitor:aad category IN (SignInLogs, NonInteractiveUserSignInLogs) user IN (<evicted upns>) action=success
+        earliest="<MM/DD/YYYY:HH:MM:SS revocation time>"
+      | table _time category user src properties.autonomousSystemNumber properties.appDisplayName properties.sessionId properties.userAgent
+      sourcetype=o365:management:activity (UserId IN (<evicted upns>) OR MailboxOwnerUPN IN (<evicted upns>)) earliest="<MM/DD/YYYY:HH:MM:SS revocation time>"
+      | eval src_ip=coalesce(ClientIPAddress, ClientIP)
+      | stats count values(Operation) as operations max(_time) as last by UserId src_ip SessionId ClientInfoString | convert ctime(last)
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1550.004"
+  - id: "bec-response/elastic/s1-successful-sign-ins-for-the-user-first-seen-per"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Elastic / Wazuh"
+    title: "Successful sign-ins for the user, first seen per IP"
+    why: "The earliest sign-in from an IP the user never uses starts the access window; every later question (what was read, what was sent) is bounded by it."
+    how: null
+    fp: "Mobile carriers and VPN concentrators give the same user a new IP every day; judge on ASN and user agent, not on the IP alone."
+    query: |-
+      FROM logs-azure.signinlogs*
+      | WHERE @timestamp > NOW() - 30 days
+        AND azure.signinlogs.properties.user_principal_name == "<upn>" AND event.outcome == "success"
+      | STATS first_seen = MIN(@timestamp), last_seen = MAX(@timestamp), signins = COUNT(*),
+          sessions = VALUES(azure.signinlogs.properties.session_id)
+          BY source.ip, source.as.organization.name, azure.signinlogs.properties.app_display_name, user_agent.original
+      | SORT first_seen
+    tested: null
+    attack:
+      - "T1078.004"
+  - id: "bec-response/elastic/s1-aitm-one-session-replayed-from-two-networks-mfa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Elastic / Wazuh"
+    title: "AiTM: one session replayed from two networks, MFA carried by the token"
+    why: "A proxy phishing kit steals the session cookie after the real MFA, so a password reset alone does not end the access. One session id from two ASNs within minutes, or a sign-in whose authentication details read “MFA requirement satisfied by claim in the token” from a new IP, is the replay."
+    how: null
+    fp: "Office Wi-Fi to phone hotspot changes ASN mid-session; a replay shows two networks within the same minutes, one of them usually a hosting provider. “Satisfied by claim in the token” is normal on a device that did MFA once; it matters only from a new IP or ASN."
+    query: |-
+      FROM logs-azure.signinlogs*
+      | WHERE @timestamp > NOW() - 30 days
+        AND azure.signinlogs.properties.user_principal_name == "<upn>" AND event.outcome == "success"
+        AND azure.signinlogs.properties.session_id IS NOT NULL
+      | STATS asns = COUNT_DISTINCT(source.as.number), ips = VALUES(source.ip), first = MIN(@timestamp), last = MAX(@timestamp)
+          BY azure.signinlogs.properties.session_id
+      | WHERE asns > 1
+      // MFA satisfied by the token rather than performed (authentication_details is a nested array; read it in Discover):
+      FROM logs-azure.signinlogs*
+      | WHERE @timestamp > NOW() - 30 days AND azure.signinlogs.properties.user_principal_name == "<upn>"
+        AND TO_STRING(azure.signinlogs.properties.authentication_details) LIKE "*MFA requirement satisfied by claim in the token*"
+      | KEEP @timestamp, source.ip, source.as.number, azure.signinlogs.properties.app_display_name, azure.signinlogs.properties.session_id, user_agent.original
+    tested: null
+    attack:
+      - "T1557"
+      - "T1550.004"
+      - "T1539"
+  - id: "bec-response/elastic/s1-victim-device-infostealer-or-fake-installer-befo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Elastic / Wazuh"
+    title: "Victim device: infostealer or fake installer before first access"
+    why: "If the session cookie or password was stolen by malware on the laptop, a password reset is not enough: the device keeps stealing new ones until it is rebuilt."
+    how: null
+    fp: "Installers and updaters run from Downloads and AppData all day; the lead is a binary the user cannot explain, launched shortly before the first foreign sign-in, with a hash new to the estate."
+    query: |-
+      process where event.type == "start" and host.name == "<victim host>" and
+        process.executable : ("?:\\Users\\*\\AppData\\*", "?:\\Users\\*\\Downloads\\*") and
+        not process.name : ("msedge.exe", "chrome.exe", "Teams.exe", "OneDrive.exe", "ms-teams.exe")
+    tested: null
+    attack:
+      - "T1555.003"
+      - "T1204.002"
+  - id: "bec-response/elastic/s2-inbox-rules-and-mailbox-forwarding-created-or-ch"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "Inbox rules and mailbox forwarding created or changed"
+    why: "The rule's creation time and client IP bound the access window and give an attacker IP to pivot on. Rules made in Outlook desktop arrive as UpdateInboxRules with the IP in o365.audit.ClientIPAddress; cmdlet records (New-InboxRule, Set-InboxRule, Set-Mailbox) carry it in o365.audit.ClientIP with the target mailbox in o365.audit.ObjectId (UserId is whoever ran the cmdlet). Set-Mailbox only matters with a forwarding parameter."
+    how: null
+    fp: "Users make rules too. Attacker rules move mail to RSS Feeds, Archive or Deleted Items, delete it, or match on invoice, payment, bank or the attacker's own domain."
+    query: |-
+      FROM logs-o365.audit-*
+      | WHERE @timestamp > NOW() - 30 days AND event.provider == "Exchange"
+        AND event.action IN ("New-InboxRule", "Set-InboxRule", "Enable-InboxRule", "UpdateInboxRules", "Set-Mailbox")
+        AND (o365.audit.UserId == "<upn>" OR o365.audit.MailboxOwnerUPN == "<upn>" OR o365.audit.ObjectId LIKE "*<mailbox alias>*")
+        AND (event.action != "Set-Mailbox"
+             OR o365.audit.Parameters.ForwardingSmtpAddress IS NOT NULL
+             OR o365.audit.Parameters.ForwardingAddress IS NOT NULL
+             OR o365.audit.Parameters.DeliverToMailboxAndForward IS NOT NULL)
+      | EVAL src_ip = COALESCE(o365.audit.ClientIPAddress, o365.audit.ClientIP)
+      | KEEP @timestamp, event.action, o365.audit.UserId, o365.audit.ObjectId, src_ip, o365.audit.SessionId,
+             o365.audit.Parameters.ForwardTo, o365.audit.Parameters.ForwardAsAttachmentTo, o365.audit.Parameters.RedirectTo,
+             o365.audit.Parameters.ForwardingSmtpAddress, o365.audit.Parameters.MoveToFolder, o365.audit.Parameters.DeleteMessage
+      | SORT @timestamp
+    tested: null
+    attack:
+      - "T1114.003"
+      - "T1564.008"
+  - id: "bec-response/elastic/s2-permissions-transport-rules-auto-reply-junk-sett"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "Permissions, transport rules, auto-reply, junk settings and deletions from the attacker's IP"
+    why: "Delegate and SendAs permissions outlive a password reset; a transport rule is a forwarding rule the mailbox owner never sees; an auto-reply or junk-list entry hides the victim's replies; HardDelete and MoveToDeletedItems from the attacker's IP are the attacker cleaning the hijacked thread."
+    how: null
+    fp: "Deletions by the owner from the office IP are the user tidying up; keep the IP and SessionId filter. A FullAccess grant from an admin IP with a ticket is not the attacker."
+    query: |-
+      FROM logs-o365.audit-*
+      | WHERE @timestamp > NOW() - 30 days AND event.provider == "Exchange"
+        AND (event.action IN ("Add-MailboxPermission", "Add-RecipientPermission", "Add-MailboxFolderPermission", "Set-MailboxFolderPermission",
+             "UpdateFolderPermissions", "New-TransportRule", "Set-TransportRule", "Set-MailboxAutoReplyConfiguration",
+             "Set-MailboxJunkEmailConfiguration", "HardDelete", "SoftDelete", "MoveToDeletedItems")
+             OR (event.action == "Set-Mailbox" AND o365.audit.Parameters.GrantSendOnBehalfTo IS NOT NULL))
+      | EVAL src_ip = COALESCE(o365.audit.ClientIPAddress, o365.audit.ClientIP)
+      | WHERE o365.audit.UserId == "<upn>" OR o365.audit.MailboxOwnerUPN == "<upn>" OR o365.audit.ObjectId LIKE "*<mailbox alias>*"
+        OR src_ip IN ("<ip1>", "<ip2>")
+      | KEEP @timestamp, event.action, o365.audit.UserId, o365.audit.MailboxOwnerUPN, o365.audit.ObjectId, src_ip, o365.audit.SessionId, o365.audit.Parameters.*
+      | SORT @timestamp
+    tested: null
+    attack:
+      - "T1098.002"
+      - "T1070.008"
+  - id: "bec-response/elastic/s2-oauth-consent-granted-in-the-window"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Rules"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "OAuth consent granted in the window"
+    why: "An app the user consented to keeps reading mail through Graph after every reset and revocation; it is removed by deleting the grant. The consent is in the Entra audit log stream."
+    how: null
+    fp: "Teams add-ins, Adobe, Zoom and signature tools ask for Mail.Read legitimately; a multi-tenant app without publisher verification consented minutes after a foreign sign-in is the one to remove."
+    query: |-
+      FROM logs-azure.auditlogs*
+      | WHERE @timestamp > NOW() - 30 days
+        AND azure.auditlogs.operation_name IN ("Consent to application", "Add OAuth2PermissionGrant", "Add delegated permission grant",
+            "Add app role assignment grant to user", "Add service principal")
+        AND (azure.auditlogs.properties.initiated_by.user.userPrincipalName == "<upn>" OR TO_STRING(azure.auditlogs.properties.target_resources) LIKE "*<upn>*")
+      | KEEP @timestamp, azure.auditlogs.operation_name, azure.auditlogs.result, azure.auditlogs.properties.initiated_by.user.ipAddress, azure.auditlogs.properties.target_resources.*
+      // Without the Azure integration, the same events reach logs-o365.audit-* as event.provider "AzureActiveDirectory"
+      // with a trailing full stop: event.action == "Consent to application."
+    tested: null
+    attack:
+      - "T1528"
+      - "T1550.001"
+  - id: "bec-response/elastic/s3-mailitemsaccessed-in-the-attacker-s-sessions-dow"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Reading"
+    stage_ord: 3
+    platform: "Elastic / Wazuh"
+    title: "MailItemsAccessed in the attacker's sessions, down to the message ids"
+    why: "Sync access means the whole folder counts as read; Bind access lists each message. Pivot on the SessionId from stage 1, not only the IP. More than 1,000 MailItemsAccessed records in 24 hours stops the logging for 24 hours (IsThrottled in OperationProperties): a gap in the window is a finding, not an all-clear."
+    how: null
+    fp: "The user's own Outlook and phone sync whole folders every few minutes; without the session or IP filter every message looks read."
+    query: |-
+      FROM logs-o365.audit-*
+      | WHERE @timestamp > NOW() - 30 days AND event.action == "MailItemsAccessed"
+        AND o365.audit.MailboxOwnerUPN == "<upn>"
+        AND (o365.audit.ClientIPAddress IN ("<ip1>", "<ip2>") OR o365.audit.SessionId IN ("<attacker session id>"))
+      | STATS records = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp), clients = VALUES(o365.audit.ClientInfoString)
+          BY o365.audit.SessionId, o365.audit.ClientIPAddress
+      // Bind or Sync and IsThrottled: o365.audit.OperationProperties. Message ids: the Folders[].FolderItems[].InternetMessageId
+      // array in the raw event (aggregated records: o365.audit.ExchangeAggregatedFolders.FolderItems.InternetMessageId); export the
+      // matching documents from Discover and extract the ids there, ES|QL does not unnest the array.
+    tested: null
+    attack:
+      - "T1114.002"
+  - id: "bec-response/elastic/s4-mail-sent-as-the-user-and-mail-from-a-lookalike"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Impersonation"
+    stage_ord: 4
+    platform: "Elastic / Wazuh"
+    title: "Mail sent as the user, and mail from a lookalike domain"
+    why: "Everyone the attacker wrote to, from the real mailbox or a lookalike, has to be warned by phone before they act on it. Send, SendAs and SendOnBehalf records carry the subject, client IP and session (Audit Standard includes Send since 2024) but not the recipients; those, and the lookalike domains matched against a dnstwist list, come from a message trace. Reply-To is in neither: read it from the.eml headers in a Content Search."
+    how: null
+    fp: "The user kept sending mail during the window; separate the attacker's sends by client IP and session from stage 1."
+    query: |-
+      FROM logs-o365.audit-*
+      | WHERE @timestamp > NOW() - 30 days
+        AND event.action IN ("Send", "SendAs", "SendOnBehalf") AND (o365.audit.MailboxOwnerUPN == "<upn>" OR o365.audit.UserId == "<upn>")
+      | KEEP @timestamp, event.action, o365.audit.UserId, o365.audit.ClientIPAddress, o365.audit.SessionId, o365.audit.Item.Subject, o365.audit.Item.InternetMessageId
+      | SORT @timestamp
+      // Recipients and lookalikes: Start-HistoricalSearch (Respond, T+5-15) and match the sender domain column against the dnstwist output.
+    tested: null
+    attack:
+      - "T1534"
+      - "T1684.001"
+      - "T1583.001"
+  - id: "bec-response/elastic/s5-payment-and-bank-detail-subjects-the-attacker-se"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Payment request"
+    stage_ord: 5
+    platform: "Elastic / Wazuh"
+    title: "Payment and bank-detail subjects the attacker sent or read"
+    why: "The outbound half of the payment request is in the Send records (subject, session); the inbound half is in the message trace or a Content Search. Rank by the message ids from the Bind records at stage 3, then widen with subject keywords; everything that comes back goes to finance by phone."
+    how: null
+    fp: "A finance mailbox matches the keywords on most of its mail; the Bind ids are the ranking, the keywords only widen the net. Inbound requests and attachments are not here: message trace and Content Search."
+    query: |-
+      FROM logs-o365.audit-*
+      | WHERE @timestamp >= TO_DATETIME("<first access, ISO 8601>") AND @timestamp <= TO_DATETIME("<revocation time, ISO 8601>")
+        AND event.action IN ("Send", "SendAs", "SendOnBehalf") AND (o365.audit.MailboxOwnerUPN == "<upn>" OR o365.audit.UserId == "<upn>")
+      | EVAL subject = TO_LOWER(o365.audit.Item.Subject)
+      | WHERE subject LIKE "*invoice*" OR subject LIKE "*remittance*" OR subject LIKE "*payment*" OR subject LIKE "*wire*"
+         OR subject LIKE "*iban*" OR subject LIKE "*bank details*" OR subject LIKE "*factuur*" OR subject LIKE "*betaling*" OR subject LIKE "*rekeningnummer*"
+         OR o365.audit.Item.InternetMessageId IN ("<bind id 1>", "<bind id 2>")
+      | KEEP @timestamp, event.action, o365.audit.ClientIPAddress, o365.audit.SessionId, o365.audit.Item.Subject, o365.audit.Item.InternetMessageId
+      | SORT @timestamp
+    tested: null
+    attack:
+      - "T1684.001"
+      - "T1657"
+  - id: "bec-response/elastic/s8-other-accounts-on-the-attacker-s-ips-the-same-ru"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Wider targets"
+    stage_ord: 8
+    platform: "Elastic / Wazuh"
+    title: "Other accounts on the attacker's IPs; the same rule elsewhere"
+    why: "Attackers rarely take one mailbox. A second account on the same IP or with the same rule name is a second incident that needs the same containment."
+    how: null
+    fp: "A shared egress IP (office NAT, the company VPN) puts every colleague on the attacker's IP; match on ASN plus user agent, or on the session, before adding an account to the eviction list."
+    query: |-
+      FROM logs-azure.signinlogs*
+      | WHERE @timestamp > NOW() - 30 days AND (source.ip IN (TO_IP("<ip1>"), TO_IP("<ip2>")) OR source.as.number == <asn>) AND event.outcome == "success"
+      | STATS first_seen = MIN(@timestamp), signins = COUNT(*) BY azure.signinlogs.properties.user_principal_name, source.ip
+      // Same rule pattern or source in other mailboxes:
+      FROM logs-o365.audit-*
+      | WHERE @timestamp > NOW() - 30 days AND event.action IN ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules", "New-TransportRule")
+      | EVAL src_ip = COALESCE(o365.audit.ClientIPAddress, o365.audit.ClientIP)
+      | WHERE src_ip IN ("<ip1>", "<ip2>") OR o365.audit.Parameters.Name LIKE "*<rule name or keyword>*"
+      | STATS first_seen = MIN(@timestamp) BY o365.audit.UserId, o365.audit.ObjectId, event.action, src_ip
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1534"
+  - id: "bec-response/elastic/s9-sign-ins-and-mailbox-activity-after-the-revocati"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Elastic / Wazuh"
+    title: "Sign-ins and mailbox activity after the revocation time"
+    why: "Access tokens issued before revocation live until they expire (60–90 min; up to 28 h on CAE-capable clients, which do receive the revocation), and the o365 feed arrives about an hour late, so a clean result in the first hour is not proof. Re-run at T+2h and T+24h. A success after revocation means a channel was missed."
+    how: null
+    fp: "The user's own devices reconnect the moment the account is re-enabled; a known device and ASN with a fresh session id is expected, the attacker's ASN or a pre-revocation session id is not."
+    query: |-
+      FROM logs-azure.signinlogs*
+      | WHERE @timestamp > TO_DATETIME("<revocation time, ISO 8601>")
+        AND azure.signinlogs.properties.user_principal_name IN ("<evicted upn 1>", "<evicted upn 2>") AND event.outcome == "success"
+      | KEEP @timestamp, azure.signinlogs.category, azure.signinlogs.properties.user_principal_name, source.ip, source.as.number,
+             azure.signinlogs.properties.app_display_name, azure.signinlogs.properties.session_id, user_agent.original
+      // Mailbox activity after revocation, from any IP:
+      FROM logs-o365.audit-*
+      | WHERE @timestamp > TO_DATETIME("<revocation time, ISO 8601>")
+        AND (o365.audit.UserId IN ("<evicted upn 1>", "<evicted upn 2>") OR o365.audit.MailboxOwnerUPN IN ("<evicted upn 1>", "<evicted upn 2>"))
+      | EVAL src_ip = COALESCE(o365.audit.ClientIPAddress, o365.audit.ClientIP)
+      | STATS operations = VALUES(event.action), records = COUNT(*), last = MAX(@timestamp) BY o365.audit.UserId, src_ip, o365.audit.SessionId, o365.audit.ClientInfoString
+    tested: null
+    attack:
+      - "T1078.004"
+      - "T1550.004"
+  - id: "bec-response/proposed/lure-email-removed-by-zap-after-delivery-check-clicks-before-ruling-the-user-out"
+    status: "active"
+    source: "T-Minus365 'Token Theft Deep Dive Part 1: Incident Response' WCdTaKVQmzI (t=25:19 ZAP after click, t=26:00 and t=43:48 Explorer Plan 2 vs Plan 1; distill 2026-10-25); single-source practitioner statement, licensing split not separately verified"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Lure email removed by ZAP after delivery: check clicks before ruling the user out"
+    why: "Zero-hour auto purge removes a phishing message after delivery, sometimes hours later. A ZAP removal shows the message reached the inbox, not that the user was protected: the user can open it and click the link before it is purged. For every recipient of a ZAP-removed lure, check URL clicks (UrlClickEvents with Defender for Office 365) and sign-ins from new infrastructure in the window between delivery and purge. Ruled out for a recipient when there is no click and no sign-in from new infrastructure between delivery and purge. Without Defender for Office 365 Plan 2 there is no Explorer search across all mail (Plan 1 has real-time detections only); fall back to message trace on sender and subject."
+    how: null
+    fp: "ZAP also removes bulk mail and newsletters that were reclassified, and most removed lures were never opened, so a ZAP removal alone is not a lead. Link detonation and pre-scanning by mail security tools can log clicks that were not the user's; check the user, device and IP on each click before treating it as one."
+    query: |-
+      // Recipients of ZAP-removed mail, and that recipient's own clicks on the message before the purge (Defender for Office 365)
+      // Joined on message and person: every recipient shares the NetworkMessageId, so a message-only join gives one user's click to all of them.
+      // A recipient address that differs from the UPN (alias, shared mailbox) shows no click here; check those by NetworkMessageId alone.
+      EmailPostDeliveryEvents
+      | where Timestamp > ago(30d)
+      | where ActionType in ("Phish ZAP", "Malware ZAP")
+      | project PurgeTime=Timestamp, NetworkMessageId, RecipientEmailAddress, Person=tolower(RecipientEmailAddress), ActionType, ActionResult
+      | join kind=leftouter (
+          UrlClickEvents
+          | where Timestamp > ago(30d)
+          | project ClickTime=Timestamp, NetworkMessageId, AccountUpn, Person=tolower(AccountUpn), Url, ClickAction=ActionType, IsClickedThrough
+        ) on NetworkMessageId, Person
+      | extend ClickedBeforePurge = isnotempty(ClickTime) and ClickTime < PurgeTime
+      | project PurgeTime, RecipientEmailAddress, ActionType, ActionResult, ClickTime, AccountUpn, Url, ClickAction,
+          IsClickedThrough, ClickedBeforePurge
+      | order by ClickedBeforePurge desc, PurgeTime asc
+      // Delivery time, to bound the delivery-to-purge window for the sign-in check
+      EmailEvents
+      | where Timestamp > ago(30d) and NetworkMessageId == "<network message id>"
+      | project DeliveryTime=Timestamp, RecipientEmailAddress, SenderFromAddress, Subject, DeliveryAction
+      // Sign-ins between delivery and purge: the other half of the rule-out. UrlClickEvents sees only Safe Links-wrapped clicks,
+      // so a QR-code lure or a link inside an attachment leaves no click row; this check still covers those
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated between (datetime(<delivery time>) .. datetime(<purge time>) + 1d)
+      | where UserPrincipalName =~ "<recipient upn>" and ResultType == "0"
+      | summarize SignIns=count(), First=min(TimeGenerated), Apps=make_set(AppDisplayName, 10) by IPAddress, AutonomousSystemNumber
+      | order by First asc
+    tested: null
+    attack:
+      - "T1566.002"
+      - "T1204.001"
+  - id: "bec-response/proposed/consent-to-a-known-bec-abused-app-em-client-perfectdata-software-cloudsponge-sig"
+    status: "active"
+    source: "Datadog default rule 'Consent given to application associated with business email compromise attacks in Microsoft 365' (def-000-ihv); cybercorner.tech 'Common OAuth Apps Used in Business Email Compromise'; entraprotect.io malicious applications database; discovered via T-Minus365 jIdBf7e5v9M (t=32:33, distill 2026-10-25)"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 3 · Reading"
+    stage_ord: 3
+    platform: "Defender XDR / Sentinel"
+    title: "Consent to a known BEC-abused app: eM Client, PERFECTDATA SOFTWARE, CloudSponge, SigParser, Supermailer, rclone"
+    why: "A small set of legitimate apps is used repeatedly after BEC account takeover: eM Client (full mailbox sync), PERFECTDATA SOFTWARE (mailbox export to PST), CloudSponge (contact export), SigParser (contact scraping), Newsletter Software Supermailer (bulk sending) and rclone (cloud file transfer). A \"Consent to application\" for one of these by the compromised user inside the exposure window, from the attacker's IP, is mailbox exfiltration or a sending channel, and it survives the password reset until the grant is removed. Some community trackers note that items synced by such apps may not be fully recorded in the Unified Audit Log, so absence of MailItemsAccessed rows does not prove nothing was taken. Ruled out when the user installed the app before the window, from their usual network, for a documented business reason."
+    how: null
+    fp: "eM Client and rclone have real users: someone who has used eM Client as their desktop mail client for months, or an engineering team syncing files with rclone, consents again after a password change or token expiry. Check when the user first consented to the app, from which IP, and whether the tenant has earlier sign-ins for it. A first-ever consent inside the window, from the attacker's IP, is the finding."
+    query: |-
+      // Consent or grants for one of the known BEC-abused apps, by anyone, with the consenting IP
+      // Matched on the whole TargetResources: on grant rows the first target is the resource API (e.g. Microsoft Graph), not the client app.
+      // A grant row that names the client only by id will not match; follow TargetId from the consent row instead.
+      AuditLogs
+      | where TimeGenerated > ago(30d)
+      | where OperationName in ("Consent to application", "Add OAuth2PermissionGrant", "Add delegated permission grant",
+          "Add app role assignment grant to user", "Add service principal")
+      | where tostring(TargetResources) has_any ("eM Client", "PERFECTDATA", "CloudSponge", "SigParser", "Supermailer", "rclone")
+      | mv-expand TargetResources
+      | project TimeGenerated, OperationName, Result, Target=tostring(TargetResources.displayName), TargetId=tostring(TargetResources.id),
+          Actor=tostring(InitiatedBy.user.userPrincipalName), ActorIP=tostring(InitiatedBy.user.ipAddress)
+      | order by TimeGenerated asc
+      // History of the same apps: months of sign-ins from the user's usual network means a real user
+      union SigninLogs, AADNonInteractiveUserSignInLogs
+      | where TimeGenerated > ago(30d)
+      | where AppDisplayName has_any ("eM Client", "PERFECTDATA", "CloudSponge", "SigParser", "Supermailer", "rclone")
+      | summarize First=min(TimeGenerated), Last=max(TimeGenerated), SignIns=count(), IPs=make_set(IPAddress, 10)
+          by UserPrincipalName, AppDisplayName
+    tested: null
+    attack:
+      - "T1528"
+      - "T1550.001"
+      - "T1114.002"
+  - id: "bec-response/proposed/empty-audit-search-for-rules-or-deletions-prove-the-ual-could-see-the-mailbox-be"
+    status: "active"
+    source: "https://learn.microsoft.com/en-us/purview/audit-search"
+    validated_at: "2026-10-26"
+    supersedes: null
+    stage: "Stage 1 · Mailbox access"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Empty audit search for rules or deletions: prove the UAL could see the mailbox before ruling it out"
+    why: "An empty Unified Audit Log result for New-InboxRule, Set-InboxRule, UpdateInboxRules, SoftDelete or HardDelete only clears the mailbox if the log could have recorded them. Four things blind it: ingestion switched off for the tenant (Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled $false, read in Exchange Online PowerShell; in Security & Compliance PowerShell the property always reads False), mailbox auditing off for the organisation (AuditDisabled), the mailbox excluded (Set-MailboxAuditBypassAssociation), and without an E5 licence mailbox audit events reach the UAL search only when auditing was enabled on that mailbox explicitly (Set-Mailbox -AuditEnabled $true). Lag is the fifth: Exchange records typically land 60 to 90 minutes after the event and Microsoft guarantees no time, so an attacker active in the last hours is not yet in the log. While any of these holds, read the rules from the mailbox itself (Get-InboxRule -IncludeHidden) and re-run the search at T+2h and T+24h. Ruled out, and the empty result stands, when ingestion and mailbox auditing were on for the whole window, no Set-AdminAuditLogConfig, Set-OrganizationConfig or Set-MailboxAuditBypassAssociation appears in it, the user's AuditBypassEnabled is False, and the window closed more than 24 hours ago."
+    how: null
+    fp: "A tenant that never turned ingestion on, or a service account bypassed for a documented reason, is a configuration gap and not the attacker's doing: no Set-AdminAuditLogConfig or Set-MailboxAuditBypassAssociation in the window. It still blinds the search, so the empty result still does not clear the mailbox."
+    query: |-
+      # Exchange Online PowerShell (Security & Compliance PowerShell reports UnifiedAuditLogIngestionEnabled as False even when it is on)
+      Get-AdminAuditLogConfig | fl UnifiedAuditLogIngestionEnabled
+      Get-OrganizationConfig | fl AuditDisabled
+      Get-MailboxAuditBypassAssociation -Identity <upn> | fl AuditBypassEnabled
+      Get-Mailbox -Identity <upn> | fl AuditEnabled, DefaultAuditSet
+      # Was any of it changed inside the window?
+      Search-UnifiedAuditLog -StartDate <window start> -EndDate (Get-Date) -ResultSize 5000 `
+        -Operations Set-AdminAuditLogConfig, Set-OrganizationConfig, Set-MailboxAuditBypassAssociation, Set-Mailbox |
+        Select-Object CreationDate, UserIds, Operations, AuditData
+      # The rules as they stand, whatever the log saw
+      Get-InboxRule -Mailbox <upn> -IncludeHidden | fl Name, Enabled, From, SubjectOrBodyContainsWords, MoveToFolder, DeleteMessage, ForwardTo, RedirectTo
+    tested: null
+    attack:
+      - "T1685.002"
+      - "T1564.008"
+steps:
+  - ord: 1
+    time: "T+0–5 min"
+    title: "Is a payment in flight?"
+    why: "Ask finance: any payment requested, approved or sent from a conversation this mailbox was part of, or any bank-detail change? If yes, finance calls the bank's fraud department on the number already on file — never a number from the email — and asks by name for the recall mechanism that fits the rail: SWIFT gpi stop-and-recall for an international wire (the receiving bank is asked to freeze while the funds are still in the gpi chain); SEPA SCT Recall for a euro transfer (the originator bank can raise it for fraud within 10 banking business days of execution; after that only a Request for Recall by the Originator, up to 13 months, which the beneficiary bank may refuse). For a wire from a US bank: an international transfer of USD 50,000 or more, within 72 hours, with the SWIFT recall already raised, qualifies for the FBI IC3 Financial Fraud Kill Chain; file at ic3.gov with the bank's recall reference. Same call: freeze every pending payment to the supplier named in the thread until the bank details are verified by phone on a number from the contract, not the email. Why: the chance of recalling a transfer falls with every hour, and the attacker is watching the mailbox for exactly this call."
+    critical: true
+  - ord: 2
+    time: "T+5–15 min"
+    title: "Export first: hold the mailbox, dump the audit, capture rules and grants"
+    why: "Litigation hold before any purge or reset, then export what rolls off: Entra sign-ins (30 days on P1/P2, 7 on the free tier), the Unified Audit Log for the user (180 days on Audit Standard, 1 year on Premium), a historical message trace (the live trace covers 10 days, the historical search 90), and the mailbox's rules, forwarding, delegates, folder permissions, OAuth grants, MFA methods and registered devices as they are now. Save the attacker's messages as.eml with full headers from both ends (victim's Sent Items and a recipient's inbox, via Content Search export) so Authentication-Results, Message-ID and Reply-To survive. Raise the mailbox audit age limit from its 90-day default; it only applies forward, so do it now. Native cmdlets only: the archived O365 investigation scripts ( DumpDelegatesandForwardingRules.ps1, RemediateBreachedAccount.ps1 ) depend on MSOnline and AzureAD, retired in 2025. Why: the creation times of the attacker's rules bound the access window, and once purged or reset they are gone as evidence."
+    critical: true
+  - ord: 3
+    time: "T+10–20 min"
+    title: "Sweep the tenant for the same pattern — before evicting"
+    why: "Look for other mailboxes with forwarding or redirect rules, rules named or shaped like the ones you just captured, tenant transport rules created in the window, sign-ins from the attacker's IP, ASN or session, and internal recipients of the compromised mailbox's outbound mail during the window. Every mailbox this finds goes on the eviction list. If the sweep can't finish in this window, go broad: block the attacker's source in Conditional Access tenant-wide and revoke sessions for every internal recipient of the account's outbound mail. Why: attackers rarely take one mailbox, and the first eviction is the moment they learn to use the others."
+    critical: true
+  - ord: 4
+    time: "T+20–35 min"
+    title: "Evict every mailbox on the list in one pass"
+    why: "For each mailbox, in this order: disable the account (no new tokens while you work), reset the password, revoke refresh tokens and sessions, then strip every channel the attacker could have added — inbox rules, forwarding, delegates, SendAs and SendOnBehalf, folder permissions, OAuth consent grants, MFA methods and registered devices added in the window (compare with the T+5–15 capture) — close the legacy protocols, verify at T+35–45 and again at T+2h and T+24h, and only then re-enable with a fresh MFA enrolment from a known-good device. All of it together, for every mailbox on the list, not one channel per hour. Attack disruption may already have disabled the user: check the Action center first. The full cmdlet sequence is in the Defender tab under Hunt & Act. Why: refresh tokens survive a password reset, access tokens already issued survive the revocation for 60–90 minutes, inbox rules and OAuth grants survive everything else, and any channel left live is how they come back."
+    critical: true
+  - ord: 5
+    time: "T+35–45 min"
+    title: "Verify the containment held — and book the re-checks"
+    why: "No successful sign-in, token refresh or mailbox access for any evicted account after the revocation time. A clean result now is not proof: access tokens issued before the revocation keep working for 60–90 minutes (CAE-capable clients hold tokens up to 28 hours but receive the revocation within minutes), and OfficeActivity arrives in Sentinel about an hour late, so at T+45 the query cannot yet show a token that is still being used. Run it now to catch the obvious (a channel you forgot), then put the same query in the case at T+2h and T+24h; the T+24h run is the one that clears the account for re-enable. Anything after revocation means a channel was missed — usually a registered device, an app grant or the still-infected laptop — so widen the containment before moving on. Why: revocation that didn't hold looks exactly like revocation that did, until the logs have caught up."
+    critical: true
+  - ord: 6
+    time: "T+45–60 min"
+    title: "Scope what the attacker saw and sent"
+    why: "Sent Items and Drafts for anything the attacker sent or left unsent (drafts never audit, so open the folder); the message ids from the MailItemsAccessed Bind records, joined to mail flow and widened with invoice, remittance, IBAN and bank-detail keywords, to list every payment thread the attacker knows (the stage 5 hunt); whether a planted Canarytoken (e.g. \"Wire Transfer Procedures.docx\") was opened; and, for every supplier in those threads, finance checks the vendor master for bank-detail changes in the last 90 days and freezes pending payments to that supplier until the details are verified by phone. On the attacker's messages, read the Authentication-Results header on the copy the recipient received (the.eml from T+5–15): it records the SPF, DKIM and DMARC verdicts the receiving server actually computed for that message, which is the evidence; a DNS lookup of the sending domain today is not. Check Reply-To and the envelope sender against the header From on the same copy. Why: what they sent decides who else must be warned; what they read decides whether this is a personal-data breach and which supplier gets paid next."
+    critical: true
+actions:
+  - platform: "Defender XDR / Sentinel"
+    label: "T+5–15 · Export"
+    name: "Preserve the evidence before any purge or reset"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a litigation hold keeps the attacker's rules, drafts and the purged messages recoverable; the audit export outlives the 30-day Entra and advanced-hunting retention; the mailbox audit age limit is 90 days by default and only applies forward; a historical message trace is the only trace older than 10 days."
+    how: "Exchange Online PowerShell and Microsoft Graph PowerShell. -SessionCommand ReturnLargeSet pages the UAL export in 5,000-record calls; repeat the call with the same -SessionId until it returns nothing. Save the attacker's messages as.eml with full headers from both the victim's Sent Items and a recipient's inbox (Content Search › export), so the Authentication-Results, Message-ID and Reply-To are preserved on both ends."
+    body: |-
+      Set-Mailbox -Identity <upn> -LitigationHoldEnabled $true
+      Set-Mailbox -Identity <upn> -AuditLogAgeLimit 365
+      Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-180) -EndDate (Get-Date) -UserIds <upn> `
+        -SessionId "case<n>-ual" -SessionCommand ReturnLargeSet -ResultSize 5000 |
+        Select-Object -ExpandProperty AuditData | Add-Content .\case<n>-ual.jsonl   # repeat until empty
+      Start-HistoricalSearch -ReportTitle "case<n>-trace" -ReportType MessageTrace -StartDate (Get-Date).AddDays(-90) `
+        -EndDate (Get-Date) -SenderAddress <upn> -NotifyAddress <your upn>
+      Get-InboxRule -Mailbox <upn> | Export-Clixml .\case<n>-rules.xml
+      Get-MgAuditLogSignIn -Filter "userPrincipalName eq '<upn>'" -All | Export-Csv .\case<n>-signins.csv
+    attack: []
+  - platform: "Defender XDR / Sentinel"
+    label: "T+10–20 · Block"
+    name: "Block the attacker for the whole tenant"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the lookalike domain and the attacker's sender reach every mailbox, not just the one you are evicting; blocking them tenant-wide stops the next message while you work."
+    how: "Defender portal › Email & collaboration › Policies & rules › Threat policies › Tenant Allow/Block Lists. Keep the default 30-day expiry rather than -NoExpiration, so the block doesn't outlive the incident. Attacker sign-in IPs: Entra admin center › Conditional Access › Named locations, then a block policy for that location."
+    body: |-
+      New-TenantAllowBlockListItems -ListType Sender -Block -Entries "<lookalike-domain>","<attacker-sender>"
+      New-TenantAllowBlockListItems -ListType Url -Block -Entries "<phishing-host>"
+    attack: []
+  - platform: "Defender XDR / Sentinel"
+    label: "T+20–35 · Evict"
+    name: "Disable, reset, revoke, strip every channel, verify, then re-enable: each mailbox on the list"
+    tier: "destructive"
+    tier_inferred: false
+    why: "attack disruption may already have disabled the user (check the Action center first). The order matters: disable stops new tokens being issued while you work, the reset invalidates the password, the revocation kills refresh tokens, and only then are the rules, forwarding, permissions, OAuth grants, MFA methods and devices removed, so none of them re-opens the door before the others are shut. Native Exchange Online and Graph cmdlets only; the archived O365 investigation scripts depend on MSOnline and AzureAD, retired in 2025."
+    how: "Incidents titled “BEC financial fraud attack launched from a compromised account (attack disruption)” may already have acted. Run the block below per account, for every account on the sweep list in the same pass. Re-enable only after the T+35–45 check and its re-runs, with a fresh MFA enrolment from a known-good device."
+    body: |-
+      # 1 Disable
+      Update-MgUser -UserId <upn> -AccountEnabled:$false
+      # 2 Reset the password (the user enrols a new one later from a known-good device)
+      Update-MgUser -UserId <upn> -PasswordProfile @{ Password = "<random>"; ForceChangePasswordNextSignIn = $true }
+      # 3 Revoke refresh tokens and sessions (issued access tokens live on until they expire)
+      Revoke-MgUserSignInSession -UserId <upn>
+      # 4 Rules, forwarding, delegates, SendAs, SendOnBehalf, folder permissions
+      Get-InboxRule -Mailbox <upn> | Remove-InboxRule -Confirm:$false
+      Set-Mailbox -Identity <upn> -ForwardingSmtpAddress $null -ForwardingAddress $null -DeliverToMailboxAndForward $false
+      Get-MailboxPermission -Identity <upn> | Where-Object { -not $_.IsInherited -and $_.User -ne "NT AUTHORITY\SELF" } |
+        ForEach-Object { Remove-MailboxPermission -Identity <upn> -User $_.User -AccessRights $_.AccessRights -Confirm:$false }
+      Get-RecipientPermission -Identity <upn> | Where-Object { $_.Trustee -ne "NT AUTHORITY\SELF" } |
+        ForEach-Object { Remove-RecipientPermission -Identity <upn> -Trustee $_.Trustee -AccessRights SendAs -Confirm:$false }
+      Set-Mailbox -Identity <upn> -GrantSendOnBehalfTo $null
+      Remove-MailboxFolderPermission -Identity "<upn>:\Inbox" -User <user added in the window> -Confirm:$false
+      # 5 OAuth grants, MFA methods and devices added in the window (compare with the T+5-15 export)
+      Get-MgUserOauth2PermissionGrant -UserId <upn> | ForEach-Object { Remove-MgOauth2PermissionGrant -OAuth2PermissionGrantId $_.Id }
+      Get-MgUserAuthenticationMethod -UserId <upn>          # then the matching Remove-MgUserAuthentication*Method:
+      Remove-MgUserAuthenticationPhoneMethod -UserId <upn> -PhoneAuthenticationMethodId <id>
+      Remove-MgUserAuthenticationMicrosoftAuthenticatorMethod -UserId <upn> -MicrosoftAuthenticatorAuthenticationMethodId <id>
+      Remove-MgUserAuthenticationSoftwareOathMethod -UserId <upn> -SoftwareOathAuthenticationMethodId <id>
+      Remove-MgUserAuthenticationFido2Method -UserId <upn> -Fido2AuthenticationMethodId <id>
+      Get-MgUserRegisteredDevice -UserId <upn> | ForEach-Object { Update-MgDevice -DeviceId $_.Id -AccountEnabled:$false }
+      # 6 Close the legacy and sync protocols the attacker used (re-open what the user needs after re-enable)
+      Set-CASMailbox -Identity <upn> -ActiveSyncEnabled $false -ImapEnabled $false -PopEnabled $false -SmtpClientAuthenticationDisabled $true
+      # 7 Verify at T+35-45, T+2h and T+24h (stage 9 hunt), then
+      Update-MgUser -UserId <upn> -AccountEnabled:$true
+    attack:
+      - "T1098.002"
+      - "T1114.003"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+20–35 · Evict"
+    name: "Pull the attacker's mail from every mailbox"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the phishing and fraud messages are still sitting in recipients' inboxes; removing them across the tenant stops the next person acting on one. The litigation hold from T+5–15 keeps a recoverable copy."
+    how: "Threat Explorer › All email › select the messages › Take action › Move or delete › Soft deleted items; for mail sent from the compromised mailbox also tick Delete sender's copy. Threat Explorer holds 30 days of mail flow. Older messages need a Compliance Search purge (Purview, eDiscovery Manager plus the Search And Purge role; 10 items per mailbox per action). Search-Mailbox is retired; do not reach for it."
+    body: |-
+      New-ComplianceSearch -Name "case<n>-purge" -ExchangeLocation All `
+        -ContentMatchQuery 'from:"<attacker-sender>" AND received>=<yyyy-mm-dd>'
+      Start-ComplianceSearch -Identity "case<n>-purge"
+      Get-ComplianceSearch -Identity "case<n>-purge" | fl Status, Items     # wait for Completed, check the count
+      New-ComplianceSearchAction -SearchName "case<n>-purge" -Purge -PurgeType SoftDelete
+    attack:
+      - "T1534"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+20–35 · Device"
+    name: "Block the stealer on every device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "if an infostealer took the cookie or password, the same file may be on other machines; a tenant-wide indicator blocks it everywhere, not just on the victim's laptop."
+    how: null
+    body: |-
+      POST https://api.security.microsoft.com/api/indicators
+      {"indicatorValue": "<sha256>", "indicatorType": "FileSha256", "action": "BlockAndRemediate",
+       "title": "IR case #<n>: infostealer", "description": "BEC case #<n>", "expirationTime": "<UTC date>"}
+    attack:
+      - "T1555.003"
+  - platform: "Defender XDR / Sentinel"
+    label: "Hour 1–24 · Rebuild"
+    name: "Isolate the victim's device, collect, then rebuild it"
+    tier: "destructive"
+    tier_inferred: false
+    why: "isolation stops the stealer sending new credentials while Live Response still works for collection; the device is rebuilt afterwards, because a cleaned device you can't prove is clean keeps feeding the attacker."
+    how: "Device page › Isolate device. Then Live Response: add Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df and Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d to the library, push them with putfile, run the snapshot with -Zip, start RESPONSE elevated for RAM, pagefile and triage files, and getfile the snapshot zip. A RAM image is too large for getfile; stage it to a share the isolated device may still reach, or collect it from the device by hand."
+    body: |-
+      POST https://api.security.microsoft.com/api/machines/{id}/isolate
+      {"Comment": "IR case #<n>", "IsolationType": "Full"}
+      # Live Response console:
+      putfile Get-PersistenceSnapshot.ps1
+      run Get-PersistenceSnapshot.ps1 -parameters "-Zip"
+      putfile MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      getfile C:\<snapshot folder>\PersistenceSnapshot-<host>-<timestamp>.zip
+    attack:
+      - "T1555.003"
+  - platform: "Defender XDR / Sentinel"
+    label: "Ahead of time"
+    name: "Sentinel playbook"
+    tier: "write"
+    tier_inferred: true
+    why: "adding the BEC response tasks to the incident automatically keeps the one-pass eviction from being done channel by channel."
+    how: "Content hub › SOAR essentials solution › Defender XDR BEC Playbook for SecOps-Tasks."
+    body: ""
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "T+5–35 · Identity"
+    name: "Export, block and evict in Entra and Exchange"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the mailbox takeover lives in Entra and Exchange, not on the endpoint; the evidence export, the tenant-wide block and the one-pass eviction run there, for every mailbox on the sweep list."
+    how: "Falcon doesn't export the UAL, block senders or revoke Entra sessions. Run the export (T+5–15), the tenant-wide block (T+10–20) and the native eviction sequence (T+20–35) from Respond; Falcon covers the devices."
+    body: ""
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "T+20–35 · Device"
+    name: "Block the stealer on every host"
+    tier: "destructive"
+    tier_inferred: false
+    why: "if an infostealer took the cookie or password, the same file may be on other machines; a global custom IOC blocks it everywhere, with an expiry so it doesn't outlive the case."
+    how: null
+    body: |-
+      POST /iocs/entities/indicators/v1
+      {"indicators": [{"type": "sha256", "value": "<sha256>", "action": "prevent", "platforms": ["windows"],
+        "severity": "high", "applied_globally": true, "expiration": "<UTC date>", "description": "BEC case #<n>"}]}
+    attack:
+      - "T1555.003"
+  - platform: "CrowdStrike Falcon"
+    label: "T+20–35 · Device"
+    name: "Contain the victim's device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "containment stops the stealer sending new credentials, and RTR keeps working on a contained host for collection."
+    how: "Host management › Network contain. The API takes several AIDs in one call if the sweep found the stealer elsewhere."
+    body: |-
+      POST /devices/entities/devices-actions/v2?action_name=contain
+      {"ids": ["<AID>"]}
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "Hour 1–24 · Rebuild"
+    name: "Collect with RTR, stop it, then rebuild the device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the binary, its drop location and the persistence it set are evidence and a hunt lead; killing the process only stops it running — the device is rebuilt, not cleaned."
+    how: "Upload Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df and Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d under Host setup and management › Response scripts and files first. get is for the snapshot zip and the suspect binary; a RAM image goes to a share the contained host is allowed to reach."
+    body: |-
+      ps
+      netstat
+      ls C:\Users\<user>\AppData\Local\Temp
+      ls C:\Users\<user>\Downloads
+      get C:\path\to\suspect.exe
+      put Get-PersistenceSnapshot.ps1
+      runscript -Raw=```& .\Get-PersistenceSnapshot.ps1 -Zip```
+      put MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      get C:\<cwd>\PersistenceSnapshot-<host>-<timestamp>.zip
+      kill <pid>
+    attack:
+      - "T1555.003"
+  - platform: "SentinelOne"
+    label: "T+5–35 · Identity"
+    name: "Export, block and evict in Entra and Exchange"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the mailbox takeover lives in Entra and Exchange, not on the endpoint; the evidence export, the tenant-wide block and the one-pass eviction run there, for every mailbox on the sweep list."
+    how: "SentinelOne doesn't export the UAL, block senders or revoke Entra sessions. Run the export (T+5–15), the tenant-wide block (T+10–20) and the native eviction sequence (T+20–35) from Respond; SentinelOne covers the devices."
+    body: ""
+    attack: []
+  - platform: "SentinelOne"
+    label: "T+20–35 · Device"
+    name: "Blocklist the stealer across the tenant"
+    tier: "write"
+    tier_inferred: true
+    why: "if an infostealer took the cookie or password, the same file may be on other machines; a tenant-scope blocklist entry stops it everywhere."
+    how: "The blocklist takes the SHA-1 of the file; type must be black_hash, any other value creates an exclusion instead."
+    body: |-
+      POST /web/api/v2.1/restrictions
+      {"data": {"type": "black_hash", "value": "<sha1>", "osType": "windows", "description": "BEC case #<n>"},
+       "filter": {"tenant": true}}
+    attack:
+      - "T1555.003"
+  - platform: "SentinelOne"
+    label: "T+20–35 · Device"
+    name: "Disconnect the victim's device from the network"
+    tier: "write"
+    tier_inferred: true
+    why: "network quarantine stops the stealer sending new credentials; the management connection stays up for collection."
+    how: "Endpoint › Actions › Disconnect from network."
+    body: ""
+    attack: []
+  - platform: "SentinelOne"
+    label: "Hour 1–24 · Rebuild"
+    name: "Collect, stop it, then rebuild the device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the binary, its drop location and the persistence it set are evidence and a hunt lead; Kill and Quarantine only stop it running — the device is rebuilt, not cleaned."
+    how: "Fetch Files: the suspect binary from AppData or Downloads. RemoteOps › Script Library › upload Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df as a Data Collection script (arguments -Zip; the zip comes back as the script output) and Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d wrapped in a one-line PowerShell script that starts it elevated. Then Threat › Mitigation › Kill, Quarantine."
+    body: ""
+    attack:
+      - "T1555.003"
+  - platform: "Velociraptor"
+    label: "T+5–35 · Identity"
+    name: "Export, block and evict in Entra and Exchange"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the mailbox takeover lives in Entra and Exchange, not on the endpoint; the evidence export, the tenant-wide block and the one-pass eviction run there, for every mailbox on the sweep list."
+    how: "Velociraptor has no identity actions. Run the export (T+5–15), the tenant-wide block (T+10–20) and the native eviction sequence (T+20–35) from Respond."
+    body: ""
+    attack: []
+  - platform: "Velociraptor"
+    label: "T+20–35 · Device"
+    name: "Quarantine every host the stealer hunt found"
+    tier: "destructive"
+    tier_inferred: false
+    why: "if the stealer sweep above found the file on more than the victim's laptop, quarantining them together keeps the others from sending fresh credentials while you deal with the first."
+    how: "Label the affected clients, then Hunt Manager › New Hunt › Include Condition: Match by label, with the artifact below. The policy only allows the Velociraptor server, so collection keeps working. RemovePolicy = true lifts it after the eradication gate."
+    body: "Windows.Remediation.Quarantine"
+    attack: []
+  - platform: "Velociraptor"
+    label: "Hour 1–24 · Rebuild"
+    name: "Collect before you stop anything"
+    tier: "destructive"
+    tier_inferred: false
+    why: "browser history shows how the phishing page or download was reached, Prefetch and Amcache what ran and when, memory what was running; stopping the process first loses what was in memory."
+    how: "Velociraptor's own artifacts cover the collection: Windows.Memory.Acquisition for RAM, Windows.KapeFiles.Targets (KapeTriage) for the triage files. Where the case needs the same persistence snapshot as the other tabs, run Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df with -Zip through Windows.System.PowerShell after staging it on the host, or Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d elevated from removable media."
+    body: |-
+      Windows.Memory.Acquisition
+      Windows.KapeFiles.Targets        (KapeTriage = Y)
+      Windows.Applications.Chrome.History
+      Windows.Forensics.Prefetch
+      Windows.System.Amcache
+      Windows.System.Pslist
+    attack:
+      - "T1555.003"
+  - platform: "Velociraptor"
+    label: "Hour 1–24 · Rebuild"
+    name: "Stop the stealer, then rebuild the device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "stopping the process ends the theft; deleting the file is not the fix — the device is rebuilt, not cleaned."
+    how: null
+    body: |-
+      Windows.System.PowerShell
+        Command = Stop-Process -Id <pid> -Force
+    attack: []
+  - platform: "Splunk"
+    label: "T+5–35 · Identity"
+    name: "Act in Entra, Exchange and the EDR"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Splunk is where you hunt, not where you act; the searches above give you the sweep list, and the actions run where the accounts and devices live."
+    how: "Run the export (T+5–15), the tenant-wide block (T+10–20) and the native eviction sequence (T+20–35) from Respond, and the device steps in your EDR's tab, including Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df and Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d before the rebuild. With Splunk SOAR, the EDR's isolate / contain action runs from the playbook — feed it every host the sweep found, not only the victim's."
+    body: ""
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "T+5–35 · Identity"
+    name: "Export, block and evict in Entra and Exchange"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the mailbox takeover lives in Entra and Exchange, not on the endpoint; the evidence export, the tenant-wide block and the one-pass eviction run there, for every mailbox on the sweep list."
+    how: "Elastic has no Entra actions. Run the export (T+5–15), the tenant-wide block (T+10–20) and the native eviction sequence (T+20–35) from Respond."
+    body: ""
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "T+20–35 · Device"
+    name: "Blocklist the stealer on every host"
+    tier: "write"
+    tier_inferred: true
+    why: "if an infostealer took the cookie or password, the same file may be on other machines; a global blocklist entry stops it on every Elastic Defend host."
+    how: "Blocklist › Add blocklist entry › Field: Hash (MD5, SHA-1 or SHA-256) › Assignment: Global."
+    body: ""
+    attack:
+      - "T1555.003"
+  - platform: "Elastic / Wazuh"
+    label: "T+20–35 · Device"
+    name: "Isolate the victim's device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "isolation stops the stealer sending new credentials; the response console keeps working for collection."
+    how: "Elastic Defend: host › Take action › Isolate host (response console: isolate ). Wazuh: an isolation active-response script run through PUT /active-response; Wazuh ships no isolation script, so write and test one before you need it."
+    body: ""
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "Hour 1–24 · Rebuild"
+    name: "Collect, stop it, then rebuild the device"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the binary, its drop location and the persistence it set are evidence and a hunt lead; killing the process only stops it running — the device is rebuilt, not cleaned."
+    how: "The response console has no file upload: stage Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df and Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d on a share the isolated host is allowed to reach (or run them from removable media), start them with execute, and get-file the snapshot zip. The RAM image stays on the share."
+    body: |-
+      processes
+      get-file --path "C:\path\to\suspect.exe"
+      execute --command "powershell -ExecutionPolicy Bypass -File \\<share>\Get-PersistenceSnapshot.ps1 -Zip"
+      get-file --path "C:\<output>\PersistenceSnapshot-<host>-<timestamp>.zip"
+      kill-process --pid <pid>
+    attack:
+      - "T1555.003"

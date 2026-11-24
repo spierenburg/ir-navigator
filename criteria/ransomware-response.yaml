@@ -1,0 +1,2733 @@
+# Source of truth for this playbook's IR criteria.
+# Hand-edit freely. Re-run 'bun run build:index' after any change.
+playbook: "ransomware-response"
+title: "Ransomware Response"
+platforms:
+  - "Defender XDR / Sentinel"
+  - "CrowdStrike Falcon"
+  - "SentinelOne"
+  - "Velociraptor"
+  - "Splunk"
+  - "Elastic / Wazuh"
+  - "Linux / ESXi"
+scenarios:
+  - id: "1"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Encryption in Progress"
+    indicators: "ransom notes appearing, mass file renames, canary-token hits, file servers at full disk and CPU, users reporting files that will not open."
+    discriminator: "Speed beats precision. Run Kill Internet and isolate segments now and accept the business outage — every minute is more encrypted data. Scope after the spread stops. Template: ransomware-resilience."
+    attack: []
+  - id: "2"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Discovered Before Encryption"
+    indicators: "C2 beacons or unexpected RMM tools, AD reconnaissance (BloodHound, AdFind), new admin accounts, attempts to delete shadow copies, backup-console logins — and nothing encrypted yet."
+    discriminator: "Don't tip them off one host at a time. Killing a single beacon tells the operator they are found while their other footholds stay live, and many then encrypt early. Contain at least as wide as they could be, in one move: cut estate or segment egress, revoke all sessions and disable the accounts seen, then map every foothold, account and persistence mechanism behind that cut — minutes to hours, not days. Go surgical only once the scope is known. Exception: anything destructive in progress — encryption starting, backup deletion, payload staging (GPO changes, PsExec copies to many hosts) — means contain immediately, at the widest level, scoped or not. Template: ransomware-pre-encryption."
+    attack: []
+  - id: "3"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Data Theft Without Encryption"
+    indicators: "an extortion email or call with sample files, a leak-site listing, nothing encrypted. Vishing variant (Silent Ransom / Luna Moth): a user was called by \"IT support\" and installed a legitimate remote-access tool — no malware anywhere."
+    discriminator: "Backups do not help: this is a confidentiality incident. First validate the claim — do the samples come from us, and from which system? Then scope what left and whose data it is; the notification clocks started when you became aware. Cut the remote-access tool's path and every other foothold in one pass: block its egress, revoke the user's sessions (a reset alone leaves tokens valid), reset the credentials, and rebuild the hosts it ran on rather than uninstalling it. Nobody talks to the extortionist except through counsel or an insurer-approved negotiator. Template: ransomware-data-extortion."
+    attack: []
+  - id: "4"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Hypervisor / NAS Encryption"
+    indicators: "VMs powered off at once,.vmdk files renamed or unreadable, SSH enabled on ESXi outside a change, lockdown mode disabled, VIB acceptance level changed, NAS shares encrypted."
+    discriminator: "No EDR runs here, so the host logs are the evidence — collect them before anything else, and do not reboot: without persistent scratch or remote syslog, ESXi logs are gone after a restart. vm-support bundles every log with a manifest; a VM snapshot with memory preserves each guest's running state. Note that commands run as ssh host cmd never reach shell.log, so an empty shell log does not mean nothing ran — auth.log and the VOB audit records in vobd.log are the authoritative trail. Work out how they got in (vCenter credentials, the AD \"ESX Admins\" group — CVE-2024-37085), then freeze the encryptor, rotate root and vCenter SSO, disable SSH and the shell and re-enter lockdown. The full command set, stage by stage, is the Linux / ESXi tab under Hunt & Act; on Linux servers and x86 NAS run get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67 and the Velociraptor Linux.Sys.Crontab, Linux.Sys.Services, Linux.Ssh.AuthorizedKeys, Linux.Syslog.SSHLogin and Linux.Search.FileFinder artifacts; ESXi has no client, so it is shell only. Template: ransomware-hypervisor."
+    attack: []
+  - id: "5"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Backups Destroyed or Tampered"
+    indicators: "deleted restore points, shortened retention, disabled backup jobs, immutability errors, backup-console logins from unexpected accounts — with or without encryption elsewhere."
+    discriminator: "Treat it as the pre-encryption signal it usually is: encryption tends to follow. Sever backup admin from production and change its credentials now, then run Scenario 2's scoping. If no clean copy survives, tell the board the same day — it changes the recovery estimate and the ransom question. Handled with the ransomware-pre-encryption template, or the ransomware-resilience template if encryption has already started."
+    attack: []
+  - id: "6"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    name: "Cloud / SaaS Data Held Hostage"
+    indicators: "mass modification or deletion in OneDrive or SharePoint, S3 objects re-encrypted with a customer-provided key (SSE-C) or deleted, a ransom note in a bucket."
+    discriminator: "Containment is identity, not network: revoke the compromised user's or app's sessions and keys ( Identity Breach Response for Microsoft 365, Cloud Incident Response for AWS, Azure and GCP storage). Recovery comes from versioning: OneDrive and SharePoint restore to an earlier point in time (up to 30 days), S3 from object versions or Object Lock. Handled with the identity-breach-response template plus a Recovery task for the restore."
+    attack: []
+criteria:
+  - id: "ransomware-response/defender/s1-inbound-rdp-smb-and-winrm-from-public-addresses"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "Defender XDR / Sentinel"
+    title: "Inbound RDP, SMB and WinRM from public addresses; VPN logons by country"
+    why: "Most ransomware cases start with a VPN or RDP logon on a valid account, or an unpatched edge device. The first external logon on the account later seen moving laterally dates the intrusion."
+    how: "DeviceNetworkEvents sees the endpoint side only. VPN and firewall authentication arrives in Sentinel as CommonSecurityLog (CEF) or a vendor table; the second query assumes CEF. Check edge-device versions against CISA KEV by hand."
+    fp: "Published RDP or SMB on a jump host and VPN concentrators that NAT every user to one address fire this. Exclude the known public-facing hosts by name, not by port. Travelling staff give two countries; three or a hosting-provider ASN is the lead."
+    query: |-
+      DeviceNetworkEvents
+      | where Timestamp > ago(30d) and ActionType == "InboundConnectionAccepted"
+      | where LocalPort in (3389, 445, 5985, 5986)
+      | where not(ipv4_is_private(RemoteIP)) and RemoteIP != "127.0.0.1"
+      | summarize FirstSeen=min(Timestamp), Connections=count() by DeviceName, RemoteIP, LocalPort
+      | order by FirstSeen asc
+      // Sentinel: VPN logons per user, how many source countries (CEF-based appliances)
+      CommonSecurityLog
+      | where TimeGenerated > ago(30d) and DeviceProduct has_any ("VPN", "Firewall", "FortiGate", "PAN-OS", "ASA")
+      | where Activity has_any ("vpn", "tunnel", "login", "logon") and DeviceAction !has "fail"
+      | extend Country = tostring(geo_info_from_ip_address(SourceIP).country)
+      | summarize Countries=make_set(Country), Sources=dcount(SourceIP), First=min(TimeGenerated) by DestinationUserName
+      | where Sources > 1 | order by First asc
+    tested: null
+    attack:
+      - "T1133"
+      - "T1078"
+  - id: "ransomware-response/defender/s2-remote-access-and-tunnelling-tools-first-seen-pe"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Remote-access and tunnelling tools, first seen per tool"
+    why: "Operators install legitimate RMM tools for persistent access and tunnel through them when the EDR blocks their C2. A tool first seen in the last days, on few hosts, is the lead."
+    how: null
+    fp: "Helpdesk RMM is legitimate on every host; the lead is a second RMM product, or the house product on servers where helpdesk never connects. Filter on the signer and install path your deployment uses."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp > ago(14d)
+      | where FileName has_any ("anydesk","screenconnect","atera","splashtop","teamviewer","rustdesk","meshagent","client32","simplehelp","syncro","level.exe","tacticalrmm",
+                                "ngrok","chisel","plink","ligolo","cloudflared","gost","frpc","rsocx")
+           or ProcessCommandLine has_any ("--reverse", "-R 0.0.0.0", "tunnel run", "client -connect")
+      | summarize FirstSeen=min(Timestamp), Hosts=dcount(DeviceName), Example=any(ProcessCommandLine) by FileName
+      | order by FirstSeen asc
+    tested: null
+    attack:
+      - "T1219"
+      - "T1572"
+  - id: "ransomware-response/defender/s2-beacon-indicators-known-named-pipes-rundll32-wit"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "Defender XDR / Sentinel"
+    title: "Beacon indicators — known named pipes, rundll32 with no arguments, remote thread injection"
+    why: "Cobalt Strike, Brute Ratel and Sliver leave default pipe names and a hollow rundll32.exe parent; a process creating a thread in another process is the loader. These date the foothold when the RMM hunt is empty."
+    how: null
+    fp: "AV, DLP and performance agents create remote threads from Program Files and are excluded above; anything from Users, ProgramData or Temp is the lead. Pipe names are the defaults; operators who change the malleable profile will not hit this."
+    query: |-
+      DeviceEvents
+      | where Timestamp > ago(14d) and ActionType == "NamedPipeEvent"
+      | extend PipeName = tostring(parse_json(AdditionalFields).PipeName)
+      | where PipeName matches regex @"(?i)\\(msagent_[a-f0-9]{2}|postex_[a-f0-9]{4}|MSSE-\d+-server|status_\d+|mojo\.5688\.8052\.|wkssvc_|ntsvcs_|DserNamePipe|SearchTextHarvester|mypipe-[fh])"
+      | project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, PipeName
+      // rundll32 with no arguments, or a remote thread from an unsigned/odd parent
+      DeviceProcessEvents
+      | where Timestamp > ago(14d) and FileName =~ "rundll32.exe"
+      | where ProcessCommandLine matches regex @"(?i)rundll32(\.exe)?""?\s*$"
+      | project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine
+      DeviceEvents
+      | where Timestamp > ago(14d) and ActionType == "CreateRemoteThreadApiCall"
+      | where InitiatingProcessFolderPath !startswith @"c:\windows\system32" and InitiatingProcessFolderPath !startswith @"c:\program files"
+      | summarize Count=count(), Targets=make_set(FileName, 10) by DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath
+    tested: null
+    attack:
+      - "T1055"
+      - "T1218.011"
+      - "T1071.001"
+  - id: "ransomware-response/defender/s3-ad-and-network-reconnaissance-tools-ldap-enumera"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Discovery"
+    stage_ord: 3
+    platform: "Defender XDR / Sentinel"
+    title: "AD and network reconnaissance tools; LDAP enumeration from workstations"
+    why: "AdFind, SharpHound and network scanners run days before encryption; they date the dwell time. The LDAP hunt catches the same reconnaissance when the tool is renamed or run in memory."
+    how: null
+    fp: "Vulnerability scanners, Entra Connect, MDI sensors and admin tooling (RSAT, PowerShell AD module on jump hosts) issue the same filters; exclude those hosts by name. A user workstation running them is the finding."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp > ago(14d)
+      | where FileName in~ ("adfind.exe","sharphound.exe","netscan.exe","nltest.exe","dsquery.exe")
+           or FileName startswith "advanced_ip_scanner"
+           or ProcessCommandLine has_any ("trustdmp","domain_trusts","-collectionmethod","objectcategory=computer","samaccounttype=805306368","/domain_trusts","Get-DomainComputer","Get-NetSession")
+      | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+      // Workstations issuing broad LDAP searches (MDE LdapSearch telemetry)
+      DeviceEvents
+      | where Timestamp > ago(14d) and ActionType == "LdapSearch"
+      | extend Filter = tostring(parse_json(AdditionalFields).SearchFilter)
+      | where Filter has_any ("objectClass=trustedDomain", "samAccountType=805306368", "objectCategory=computer", "adminCount=1", "servicePrincipalName=*")
+      | summarize Searches=count(), Filters=make_set(Filter, 5) by DeviceName, InitiatingProcessFileName, InitiatingProcessAccountName
+      | where InitiatingProcessFileName !in~ ("lsass.exe","svchost.exe","Microsoft.Tri.Sensor.exe") | order by Searches desc
+    tested: null
+    attack:
+      - "T1087.002"
+      - "T1482"
+      - "T1046"
+      - "T1018"
+  - id: "ransomware-response/defender/s4-lsass-credential-dumping-handle-access-and-known"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "LSASS credential dumping — handle access and known tools"
+    why: "A LSASS dump means every credential cached on that host is the attacker's; Kill Authentication has to cover them. Command-line patterns miss nanodump and renamed tools; the OpenProcessApiCall event sees the handle itself."
+    how: null
+    fp: "AV engines, EDR agents, Sysmon and crash-dump tooling open LSASS from Program Files or System32 and are excluded above. Anything else opening LSASS from a user-writable path is a finding; investigate rather than tune."
+    query: |-
+      DeviceEvents
+      | where Timestamp > ago(14d) and ActionType == "OpenProcessApiCall" and FileName =~ "lsass.exe"
+      | where InitiatingProcessFolderPath !startswith @"c:\windows\system32" and InitiatingProcessFolderPath !startswith @"c:\program files"
+      | summarize Count=count(), First=min(Timestamp) by DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessSHA256
+      | order by First asc
+      // Known tools and techniques by command line
+      DeviceProcessEvents
+      | where Timestamp > ago(14d)
+      | where (ProcessCommandLine has "comsvcs" and ProcessCommandLine has "MiniDump")
+           or (FileName startswith "procdump" and ProcessCommandLine has "lsass")
+           or ProcessCommandLine has_any ("sekurlsa", "nanodump", "lsassy", "pypykatz", "dumpert", "handlekatz", "mimikatz")
+           or (FileName =~ "taskmgr.exe" and ProcessCommandLine has "lsass")
+           or (FileName =~ "rundll32.exe" and ProcessCommandLine has "lsass")
+      | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+    tested: null
+    attack:
+      - "T1003.001"
+  - id: "ransomware-response/defender/s4-ntds-dit-theft-from-a-domain-controller"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "NTDS.dit theft from a domain controller"
+    why: "One copy of ntds.dit plus the SYSTEM hive is every password hash in the domain. It is the reason the krbtgt reset has to happen twice and why every service account is rotated."
+    how: null
+    fp: "Backup agents and IFM media for new DCs create shadow copies and IFM sets on a schedule; match the account and time against the backup job. A copy of ntds.dit under a user profile, Temp or a share has no legitimate reason."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp > ago(30d)
+      | where (FileName =~ "ntdsutil.exe" and ProcessCommandLine has_any ("ifm", "create full"))
+           or (FileName =~ "vssadmin.exe" and ProcessCommandLine has_all ("create", "shadow"))
+           or (FileName in~ ("esentutl.exe","copy.exe","xcopy.exe","robocopy.exe") and ProcessCommandLine has "ntds.dit")
+           or (FileName =~ "diskshadow.exe")
+           or ProcessCommandLine has_all ("reg", "save", "hklm\\system")
+      | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+      DeviceFileEvents
+      | where Timestamp > ago(30d) and FileName =~ "ntds.dit" and FolderPath !startswith @"c:\windows\ntds"
+      | project Timestamp, DeviceName, FolderPath, InitiatingProcessFileName, InitiatingProcessAccountName
+    tested: null
+    attack:
+      - "T1003.003"
+  - id: "ransomware-response/defender/s4-dcsync-and-kerberoasting"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "Defender XDR / Sentinel"
+    title: "DCSync and Kerberoasting"
+    why: "DCSync pulls hashes over the replication protocol with no process on the DC; Kerberoasting cracks service-account passwords offline. Both show up only in directory and ticket telemetry, not on the endpoint. Defender for Identity records replication as IdentityDirectoryEvents; without MDI, SecurityEvent 4662 and 4769 in Sentinel are the source."
+    how: null
+    fp: "Entra Connect ( MSOL_ or the AD DS connector account) and some backup or identity products replicate legitimately; name them. Legacy applications still request RC4 tickets, but one user requesting five or more distinct SPNs in an hour is Rubeus, not an application."
+    query: |-
+      // Defender for Identity: replication from anything that is not a DC or Entra Connect
+      IdentityDirectoryEvents
+      | where Timestamp > ago(30d) and Application == "Active Directory" and ActionType == "Directory Services replication"
+      | where DeviceName !in~ ("<dc01>", "<dc02>", "<entra-connect>")
+      | project Timestamp, AccountName, DeviceName, DestinationDeviceName
+      // Sentinel, Security log on DCs: 4662 with the replication GUIDs from a non-machine account
+      SecurityEvent
+      | where TimeGenerated > ago(30d) and EventID == 4662 and ObjectServer == "DS"
+      | where Properties has_any ("1131f6aa-9c07-11d1-f79f-00c04fc2dcd2", "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2", "89e95b76-444d-4c62-991a-0facbeda640c")
+      | where SubjectUserName !endswith "$" and SubjectUserName !startswith "MSOL_"
+      | project TimeGenerated, Computer, SubjectUserName, SubjectDomainName
+      // Kerberoasting: RC4 service tickets for many SPNs from one source
+      SecurityEvent
+      | where TimeGenerated > ago(14d) and EventID == 4769 and TicketEncryptionType == "0x17" and Status == "0x0"
+      | where ServiceName !endswith "$" and ServiceName != "krbtgt"
+      | summarize Services=dcount(ServiceName), Names=make_set(ServiceName, 20) by TargetUserName, IpAddress, bin(TimeGenerated, 1h)
+      | where Services > 5 | order by Services desc
+    tested: null
+    attack:
+      - "T1003.006"
+      - "T1558.003"
+  - id: "ransomware-response/defender/s5-one-account-or-source-reaching-many-hosts"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "One account or source reaching many hosts"
+    why: "Fan-out from one source is how the payload is staged; the source host and account are what to contain first."
+    how: null
+    fp: "Domain controllers, vulnerability scanners, backup servers, SCCM/Intune distribution points, monitoring pollers and admin jump hosts all reach dozens of targets. Exclude those source IPs and service accounts, then look at the remainder; a user account or workstation IP above the threshold is the finding."
+    query: |-
+      DeviceLogonEvents
+      | where Timestamp > ago(7d) and ActionType == "LogonSuccess"
+      | where LogonType in ("Network","RemoteInteractive") and isnotempty(RemoteIP)
+      | summarize Targets=dcount(DeviceName), First=min(Timestamp), Last=max(Timestamp) by AccountName, RemoteIP
+      | where Targets > 10 | order by Targets desc
+    tested: null
+    attack:
+      - "T1021.001"
+      - "T1021.002"
+  - id: "ransomware-response/defender/s5-remote-execution-services-tasks-wmi-winrm-and-im"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "Defender XDR / Sentinel"
+    title: "Remote execution — services, tasks, WMI, WinRM and Impacket"
+    why: "PsExec is the minority. Most tooling installs a service with a random name, registers a task, or runs through WMI or WinRM; Impacket's wmiexec / smbexec leave a fixed cmd.exe /Q /c … \\\\127.0.0.1\\ADMIN$ shape. Each hit is a target host for the isolation list."
+    how: null
+    fp: "SCCM, Intune, GPO software installs and monitoring agents install the same service on every host; the random eight-letter name or hex name is the PsExec-clone signature. wmiprvse.exe spawning powershell.exe is also how SCCM and some RMMs run scripts; match the script path."
+    query: |-
+      DeviceEvents
+      | where Timestamp > ago(7d) and ActionType in ("ServiceInstalled", "ScheduledTaskCreated")
+      | extend F = parse_json(AdditionalFields)
+      | extend Name = coalesce(tostring(F.ServiceName), tostring(F.TaskName)), Path = coalesce(tostring(F.ServiceFilePath), tostring(F.TaskContent))
+      | where InitiatingProcessFileName in~ ("services.exe", "svchost.exe")
+      | summarize Hosts=dcount(DeviceName), Example=any(Path) by ActionType, Name
+      | where Hosts > 3 or Name matches regex @"^[A-Za-z]{8}$|^[0-9a-f]{8,}$|PSEXESVC|csexec|paexec|RemCom"
+      | order by Hosts desc
+      // WMI, WinRM and Impacket signatures
+      DeviceProcessEvents
+      | where Timestamp > ago(7d)
+      | where (InitiatingProcessFileName in~ ("wmiprvse.exe", "wsmprovhost.exe") and FileName in~ ("cmd.exe", "powershell.exe", "pwsh.exe", "rundll32.exe", "mshta.exe"))
+           or (FileName =~ "cmd.exe" and ProcessCommandLine has "/Q /c" and ProcessCommandLine has_any ("ADMIN$", "\\127.0.0.1\\", "2>&1"))
+      | project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, ProcessCommandLine
+    tested: null
+    attack:
+      - "T1569.002"
+      - "T1053.005"
+      - "T1047"
+      - "T1021.006"
+  - id: "ransomware-response/defender/s6-esxi-and-vcenter-audit-events-from-syslog"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Recovery planes"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "ESXi and vCenter audit events from syslog"
+    why: "Enabling SSH or the ESXi Shell, leaving lockdown mode and logging in as root on a host that is normally managed only through vCenter is the attacker lining up the hypervisor encryptor. ESXi writes these as VOB audit records; vCenter writes SSO logins. Both reach Sentinel only if syslog forwarding is configured — if this query is empty, confirm the forwarder before concluding nothing happened."
+    how: null
+    fp: "Patch windows and vendor support sessions enable SSH legitimately; match each enable event to a change record. Any enable outside a change, or from an account that is not the virtualisation team, is the finding."
+    query: |-
+      Syslog
+      | where TimeGenerated > ago(14d)
+      | where ProcessName in~ ("vobd", "hostd", "Hostd", "vpxd", "sso", "vmware-sso")
+      | where SyslogMessage has_any ("esx.audit.ssh.enabled", "esx.audit.shell.enabled", "esx.audit.lockdownmode.disabled",
+                                     "esx.audit.account.loginfailures", "esx.audit.account.locked", "User root@", "logged in as", "esx.audit.dcui.enabled")
+      | project TimeGenerated, Computer, ProcessName, SyslogMessage
+      | order by TimeGenerated asc
+      // AD "ESX Admins" group membership changes (CVE-2024-37085 path)
+      SecurityEvent
+      | where TimeGenerated > ago(30d) and EventID in (4728, 4732, 4756)
+      | where TargetUserName =~ "ESX Admins"
+      | project TimeGenerated, Computer, SubjectUserName, MemberName, TargetUserName
+    tested: null
+    attack:
+      - "T1021.004"
+      - "T1685"
+  - id: "ransomware-response/defender/s6-backup-console-logons-backup-deletion-and-retent"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Recovery planes"
+    stage_ord: 6
+    platform: "Defender XDR / Sentinel"
+    title: "Backup console logons, backup deletion and retention changes"
+    why: "Backups are the first thing a ransomware operator destroys once they have the hypervisor (94% of victims saw their backups attacked — Sophos, State of Ransomware 2024). Veeam writes an event for every restore point deleted, job changed, repository removed and MFA toggled; the Backup & Replication server's Security log shows who logged on to do it."
+    how: "Veeam Backup & Replication writes to the Windows event log Veeam Backup (collect it with AMA into Event ) and, from 12.1, to syslog with the same ids as instanceId. Ids below are from the Veeam Backup & Replication Event Reference."
+    fp: "Retention policy runs delete restore points on every job cycle; the finding is a deletion outside the job schedule, or by an interactive user rather than the Veeam service account. Backup admins log on to the console daily; a new source IP or a non-backup account is the lead."
+    query: |-
+      // Veeam audit events: 10050 restore point deleted, 23050 job settings updated, 23090 job deleted,
+      // 28200 repository deleted, 30200 scale-out repository deleted, 31400 user/group deleted,
+      // 40201 MFA disabled, 40204 MFA for user disabled, 42401 four-eyes authorisation disabled, 41800 attempt to delete backup failed
+      Event
+      | where TimeGenerated > ago(30d) and EventLog == "Veeam Backup"
+      | where EventID in (10050, 23050, 23090, 28200, 30200, 31400, 40201, 40204, 42401, 41800)
+      | project TimeGenerated, Computer, EventID, RenderedDescription
+      Syslog
+      | where TimeGenerated > ago(30d) and SyslogMessage has "enterpriseId=\"31023\""
+      | where SyslogMessage matches regex @"instanceId=(10050|23050|23090|28200|30200|31400|40201|40204|42401|41800)\b"
+      | project TimeGenerated, Computer, SyslogMessage
+      // Interactive and RDP logons to the backup servers, and backup-admin logons anywhere else
+      SecurityEvent
+      | where TimeGenerated > ago(30d) and EventID == 4624 and LogonType in (2, 10)
+      | where Computer in~ ("<vbr01>", "<vbr-proxy01>") or TargetUserName in~ ("<svc-veeam>", "<backup-admin>")
+      | summarize Logons=count(), First=min(TimeGenerated) by Computer, TargetUserName, IpAddress, LogonType
+      | order by First asc
+    tested: null
+    attack:
+      - "T1078"
+      - "T1490"
+  - id: "ransomware-response/defender/s7-transfer-tools-cloud-storage-destinations-and-ar"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Exfiltration"
+    stage_ord: 7
+    platform: "Defender XDR / Sentinel"
+    title: "Transfer tools, cloud-storage destinations and archive staging"
+    why: "rclone to MEGA is still the most common path, but Dropbox, pCloud, Backblaze B2, Gofile and temp.sh are the alternates, and the data is usually archived with 7-Zip or WinRAR first. A hit makes this a data breach and the leak-site threat real."
+    how: "DeviceNetworkEvents has no byte counts. Egress volume per host comes from the firewall or proxy: in Sentinel, CommonSecurityLog | summarize sum(SentBytes) by SourceIP, DestinationIP over the dwell window."
+    fp: "Corporate Dropbox, Backblaze or Wasabi backup agents hit the same domains from every host; filter on the initiating process and account. Users zipping a project folder trip the archive count; the attacker's archives are on file servers, by an admin account, often at night, and split into volumes."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp > ago(14d)
+      | where FileName in~ ("rclone.exe","megasync.exe","megacmd.exe","winscp.exe","filezilla.exe","restic.exe","curl.exe")
+           or ProcessCommandLine has_any ("rclone", "mega-put", "--transfers", "b2 upload", "ftp://")
+           or (FileName in~ ("7z.exe","7za.exe","rar.exe","winrar.exe") and ProcessCommandLine has " a " and ProcessCommandLine has_any ("-p", "-hp", "-mhe", "-r", "-v"))
+      | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+      DeviceNetworkEvents
+      | where Timestamp > ago(14d)
+      | where RemoteUrl has_any ("mega.nz","mega.io","mega.co.nz","dropbox.com","dropboxapi.com","pcloud.com","backblazeb2.com","backblaze.com","gofile.io","temp.sh","file.io","ufile.io","filetransfer.io","anonfiles.com","transfer.sh","put.io","storj.io","wasabisys.com")
+      | summarize Connections=count(), First=min(Timestamp) by DeviceName, InitiatingProcessFileName, RemoteUrl
+      | order by Connections desc
+      // Archives created in bulk on file servers
+      DeviceFileEvents
+      | where Timestamp > ago(14d) and ActionType == "FileCreated" and (FileName endswith ".7z" or FileName endswith ".rar" or FileName endswith ".zip" or FileName endswith ".001")
+      | summarize Archives=count(), Size=sum(FileSize) by DeviceName, InitiatingProcessFileName, InitiatingProcessAccountName, bin(Timestamp, 1h)
+      | where Archives > 20 or Size > 5000000000
+    tested: null
+    attack:
+      - "T1567.002"
+      - "T1560.001"
+      - "T1048"
+  - id: "ransomware-response/defender/s8-shadow-copy-boot-recovery-and-backup-catalog-del"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Impact preparation"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Shadow-copy, boot-recovery and backup-catalog deletion"
+    why: "These run minutes before encryption. A hit with no encryption yet means contain now."
+    how: null
+    fp: "Some backup products resize shadow storage as part of a job; delete shadows /all from an interactive account has no legitimate use."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp > ago(3d)
+      | where (FileName =~ "vssadmin.exe" and ProcessCommandLine has_all ("delete","shadows"))
+           or (FileName =~ "vssadmin.exe" and ProcessCommandLine has_all ("resize","shadowstorage"))
+           or (FileName =~ "wmic.exe" and ProcessCommandLine has_all ("shadowcopy","delete"))
+           or (FileName =~ "bcdedit.exe" and ProcessCommandLine has_any ("recoveryenabled", "bootstatuspolicy"))
+           or (FileName =~ "wbadmin.exe" and ProcessCommandLine has_all ("delete","catalog"))
+           or (FileName =~ "powershell.exe" and ProcessCommandLine has "Win32_ShadowCopy" and ProcessCommandLine has "Delete")
+      | project Timestamp, DeviceName, AccountName, ProcessCommandLine
+    tested: null
+    attack:
+      - "T1490"
+  - id: "ransomware-response/defender/s8-security-tooling-stopped-and-gpo-changes"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Impact preparation"
+    stage_ord: 8
+    platform: "Defender XDR / Sentinel"
+    title: "Security tooling stopped and GPO changes"
+    why: "Defender exclusions, real-time protection off and services stopped precede the payload; a new or modified GPO is how it is pushed estate-wide. A GPO change is evidence of the deployment channel from the T+45–60 step."
+    how: null
+    fp: "Patch cycles and DBAs stop SQL and backup services; GPO edits happen daily in a large estate. Match each hit to a change ticket; the finding is a stop command across many hosts from one account, or a GPO edit by an account that does not administer GPOs."
+    query: |-
+      DeviceProcessEvents
+      | where Timestamp > ago(3d)
+      | where ProcessCommandLine has_any ("Set-MpPreference", "DisableRealtimeMonitoring", "Add-MpPreference -ExclusionPath")
+           or (FileName in~ ("net.exe","net1.exe","sc.exe") and ProcessCommandLine has_any ("stop", "config", "delete") and ProcessCommandLine has_any ("WinDefend", "Sense", "MsMpSvc", "SepMasterService", "CSFalconService", "SentinelAgent", "veeam", "sql", "vss", "backup"))
+           or (FileName =~ "taskkill.exe" and ProcessCommandLine has_any ("sql", "veeam", "backup", "/im"))
+      | project Timestamp, DeviceName, AccountName, ProcessCommandLine
+      DeviceRegistryEvents
+      | where Timestamp > ago(3d) and RegistryKey has @"Windows Defender" and RegistryValueName in~ ("DisableAntiSpyware", "DisableRealtimeMonitoring", "TamperProtection")
+      | project Timestamp, DeviceName, InitiatingProcessAccountName, RegistryKey, RegistryValueName, RegistryValueData
+      // Sentinel: GPO objects created or modified (needs Directory Service Changes auditing on DCs)
+      SecurityEvent
+      | where TimeGenerated > ago(7d) and EventID in (5136, 5137) and ObjectClass == "groupPolicyContainer"
+      | project TimeGenerated, Computer, SubjectUserName, ObjectDN, AttributeLDAPDisplayName, AttributeValue
+    tested: null
+    attack:
+      - "T1685"
+      - "T1484.001"
+      - "T1489"
+  - id: "ransomware-response/defender/s9-mass-file-changes-by-one-process-ransom-notes"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Encryption"
+    stage_ord: 9
+    platform: "Defender XDR / Sentinel"
+    title: "Mass file changes by one process; ransom notes"
+    why: "The process doing the writing is patient zero's payload; the note name identifies the variant."
+    how: null
+    fp: "Backup agents, DCs (SYSVOL replication), build servers, compilers, Outlook and OneDrive sync exceed 500 file writes in five minutes on their own. Exclude by InitiatingProcessSHA256 of your known software, not by host; the payload is an unsigned binary with no history in DeviceFileCertificateInfo."
+    query: |-
+      DeviceFileEvents
+      | where Timestamp > ago(1d) and ActionType in ("FileRenamed","FileModified")
+      | summarize Files=count(), Extensions=dcount(FileName) by DeviceName, InitiatingProcessFileName, InitiatingProcessSHA256, bin(Timestamp, 5m)
+      | where Files > 500 | order by Files desc
+      DeviceFileEvents
+      | where Timestamp > ago(1d) and ActionType == "FileCreated"
+      | where FileName matches regex @"(?i)^(readme|restore|recover|decrypt|how_to|how-to|!!!|_readme|unlock).*\.(txt|html?|hta)$"
+      | summarize Hosts=dcount(DeviceName), Notes=count(), Example=any(FolderPath) by FileName, InitiatingProcessFileName
+    tested: null
+    attack:
+      - "T1486"
+  - id: "ransomware-response/defender/s10-ransom-contact-by-mail-and-the-note-s-contact-de"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 10 · Extortion"
+    stage_ord: 10
+    platform: "Defender XDR / Sentinel"
+    title: "Ransom contact by mail and the note's contact details"
+    why: "The first contact usually arrives by email to executives or the generic mailbox, from a privacy mail provider, within hours of encryption; leak-site posts follow days later. Finding every message tells counsel who has been contacted and gives the negotiator the case id and channel from the note."
+    how: "Leak-site listing is not visible in any Microsoft table; threat intel or the IR firm monitors the group's site. The note itself: getfile in Live Response, then grep the.onion URL, Tox id and case id."
+    fp: "Legitimate mail from Proton or Tuta users exists; the subject filter and a.onion link are what separate the contact from ordinary mail. Expect phishing that imitates the extortionist once the incident is public."
+    query: |-
+      EmailEvents
+      | where Timestamp > ago(7d) and EmailDirection == "Inbound"
+      | where SenderFromDomain in~ ("onionmail.org","proton.me","protonmail.com","tutanota.com","tuta.io","cock.li","mail2tor.com","skiff.com")
+           or Subject has_any ("your network", "your files", "encrypted", "decrypt", "negotiat", "data leak", "stolen", "ransom", "your company")
+      | project Timestamp, SenderFromAddress, RecipientEmailAddress, Subject, DeliveryAction, NetworkMessageId
+      EmailUrlInfo
+      | where Timestamp > ago(7d) and (Url has ".onion" or Url has "tox.chat")
+      | join kind=inner (EmailEvents | project NetworkMessageId, SenderFromAddress, RecipientEmailAddress, Subject) on NetworkMessageId
+    tested: null
+    attack:
+      - "T1657"
+  - id: "ransomware-response/crowdstrike/s1-inbound-rdp-smb-and-winrm-from-public-addresses"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "CrowdStrike Falcon"
+    title: "Inbound RDP, SMB and WinRM from public addresses; first external logon per account"
+    why: "Most ransomware cases start with a VPN or RDP logon on a valid account, or an unpatched edge device. The first external logon on the account later seen moving laterally dates the intrusion."
+    how: "The sensor sees inbound connections and logons, not the VPN appliance. VPN authentication is in your firewall or SIEM; if Next-Gen SIEM has the connector, search its vendor fields for the same user and date."
+    fp: "A published RDP gateway or a NAT'd VPN concentrator shows one public address on every logon; exclude those hosts and that address by name. Hosting-provider addresses on a user account are the lead."
+    query: |-
+      #event_simpleName=NetworkReceiveAcceptIP4
+      | LocalPort=3389 or LocalPort=445 or LocalPort=5985 or LocalPort=5986
+      | !cidr(RemoteAddressIP4, subnet=["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"])
+      | groupBy([ComputerName, RemoteAddressIP4, LocalPort], function=[min(@timestamp, as=FirstSeen), count(as=Connections)])
+      | sort(FirstSeen, order=asc)
+      #event_simpleName=UserLogon LogonType=10
+      | !cidr(RemoteAddressIP4, subnet=["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"])
+      | groupBy([UserName, RemoteAddressIP4], function=[min(@timestamp, as=FirstSeen), count(ComputerName, distinct=true, as=Hosts)])
+    tested: null
+    attack:
+      - "T1133"
+      - "T1078"
+  - id: "ransomware-response/crowdstrike/s2-remote-access-and-tunnelling-tools-first-seen-pe"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "CrowdStrike Falcon"
+    title: "Remote-access and tunnelling tools, first seen per tool"
+    why: "Operators install legitimate RMM tools for persistent access and tunnel through them when the EDR blocks their C2. A tool first seen in the last days, on few hosts, is the lead."
+    how: null
+    fp: "Helpdesk RMM is legitimate on every host; the lead is a second RMM product, or the house product on servers where helpdesk never connects. Filter on the signer and install path your deployment uses."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | ImageFileName=/\\(anydesk|screenconnect|atera|splashtop|teamviewer|rustdesk|meshagent|client32|simplehelp|syncro|tacticalrmm|ngrok|chisel|plink|ligolo[^\\]*|cloudflared|gost|frpc)[^\\]*\.exe$/i
+        or CommandLine=/--reverse|-R 0\.0\.0\.0|tunnel run|client -connect/i
+      | groupBy([FileName], function=[min(@timestamp, as=FirstSeen), count(ComputerName, distinct=true, as=Hosts), collect([CommandLine], limit=3)])
+      | sort(FirstSeen, order=asc)
+    tested: null
+    attack:
+      - "T1219"
+      - "T1572"
+  - id: "ransomware-response/crowdstrike/s2-beacon-indicators-hollow-rundll32-lolbins-with-n"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "CrowdStrike Falcon"
+    title: "Beacon indicators — hollow rundll32, LOLBins with network, Falcon's own injection detections"
+    why: "Cobalt Strike, Brute Ratel and Sliver loaders run under rundll32.exe with no arguments or inject into a signed process. The sensor has no named-pipe event; injection is a Falcon detection (tactic Defense Evasion, technique Process Injection), so check the detections list for the same window as this query."
+    how: null
+    fp: "dllhost.exe and werfault.exe talk to Microsoft; notepad.exe and rundll32.exe with no arguments never should. Exclude Microsoft address ranges, not the process."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | ImageFileName=/\\rundll32\.exe$/i CommandLine=/rundll32(\.exe)?"?\s*$/i
+      | table([@timestamp, ComputerName, UserName, ParentBaseFileName, CommandLine])
+      // signed LOLBins making outbound connections to non-RFC1918 addresses
+      #event_simpleName=NetworkConnectIP4
+      | !cidr(RemoteAddressIP4, subnet=["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"])
+      | join({#event_simpleName=ProcessRollup2 ImageFileName=/\\(rundll32|regsvr32|mshta|msbuild|installutil|wscript|cscript|dllhost|werfault|notepad)\.exe$/i}, field=ContextProcessId, key=TargetProcessId, include=[ImageFileName, CommandLine, ParentBaseFileName])
+      | groupBy([ComputerName, ImageFileName, RemoteAddressIP4, RemotePort], function=count())
+    tested: null
+    attack:
+      - "T1055"
+      - "T1218.011"
+      - "T1071.001"
+  - id: "ransomware-response/crowdstrike/s3-ad-and-network-reconnaissance-tools"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Discovery"
+    stage_ord: 3
+    platform: "CrowdStrike Falcon"
+    title: "AD and network reconnaissance tools"
+    why: "AdFind, SharpHound and network scanners run days before encryption; they date the dwell time."
+    how: null
+    fp: "Admin jump hosts run nltest and dsquery daily; a user workstation running them, or any host running SharpHound, is the finding."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | ImageFileName=/\\(adfind|sharphound|netscan|nltest|dsquery|advanced_ip_scanner[^\\]*)\.exe$/i
+        or CommandLine=/trustdmp|domain_trusts|-collectionmethod|objectcategory=computer|samaccounttype=805306368|Get-DomainComputer|Get-NetSession|\/dclist/i
+      | table([@timestamp, ComputerName, UserName, ImageFileName, CommandLine])
+    tested: null
+    attack:
+      - "T1087.002"
+      - "T1482"
+      - "T1046"
+      - "T1018"
+  - id: "ransomware-response/crowdstrike/s4-credential-dumping-lsass-tools-ntds-dit-kerberoa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "CrowdStrike Falcon"
+    title: "Credential dumping — LSASS tools, NTDS.dit, Kerberoasting"
+    why: "A LSASS dump means every credential cached on that host is the attacker's; an NTDS copy is every hash in the domain. The sensor has no LSASS-handle event in the search index; Falcon raises its own Credential Access detections for handle-based dumping (including nanodump), so pair this query with the detections list. DCSync has no sensor event at all — Falcon Identity Protection alerts on it, otherwise 4662 on the DCs lives in your SIEM (Splunk or Elastic tab)."
+    how: null
+    fp: "Backup agents create shadow copies on schedule and some IFM media is legitimate; match account and time to the backup job. The LSASS and Kerberoast patterns have no legitimate use."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | CommandLine=/comsvcs.*MiniDump|procdump.*lsass|sekurlsa|nanodump|lsassy|pypykatz|dumpert|handlekatz|mimikatz|taskmgr.*lsass/i
+        or (ImageFileName=/\\ntdsutil\.exe$/i CommandLine=/ifm|create full/i)
+        or (ImageFileName=/\\vssadmin\.exe$/i CommandLine=/create shadow/i)
+        or CommandLine=/ntds\.dit|reg(\.exe)? save hklm\\system/i
+        or CommandLine=/kerberoast|GetUserSPNs|Invoke-Kerberoast|asktgs/i
+      | table([@timestamp, ComputerName, UserName, ImageFileName, CommandLine])
+    tested: null
+    attack:
+      - "T1003.001"
+      - "T1003.003"
+      - "T1558.003"
+  - id: "ransomware-response/crowdstrike/s5-one-account-or-source-reaching-many-hosts"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "CrowdStrike Falcon"
+    title: "One account or source reaching many hosts"
+    why: "Fan-out from one source is how the payload is staged; the source host and account are what to contain first."
+    how: null
+    fp: "DCs, vulnerability scanners, backup servers, SCCM and monitoring pollers reach dozens of hosts; exclude their source addresses and service accounts first."
+    query: |-
+      #event_simpleName=UserLogon
+      | LogonType=3 or LogonType=10
+      | groupBy([UserName, RemoteAddressIP4], function=[count(ComputerName, distinct=true, as=Targets), min(@timestamp, as=First), max(@timestamp, as=Last)])
+      | Targets > 10
+      | sort(Targets, order=desc)
+    tested: null
+    attack:
+      - "T1021.001"
+      - "T1021.002"
+  - id: "ransomware-response/crowdstrike/s5-remote-execution-services-and-tasks-created-remo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "CrowdStrike Falcon"
+    title: "Remote execution — services and tasks created remotely, WMI, WinRM and Impacket"
+    why: "ServiceStarted and ScheduledTaskRegistered carry ClientComputerName and RemoteAddressIP4 when the request came over the network, which is exactly the PsExec-clone and remote-task case. The second query catches WMI, WinRM and Impacket, which create no service."
+    how: null
+    fp: "SCCM, Intune and monitoring agents register services and tasks remotely on every host from the management server; exclude those RemoteAddressIP4 values. A random eight-letter or hex service name is the PsExec-clone signature."
+    query: |-
+      #event_simpleName=/^(ServiceStarted|ScheduledTaskRegistered)$/
+      | RemoteAddressIP4=* RemoteAddressIP4!="127.0.0.1"
+      | ServiceDisplayName=* or TaskName=*
+      | groupBy([#event_simpleName, ServiceDisplayName, TaskName, RemoteAddressIP4, ClientComputerName], function=[count(aid, distinct=true, as=Hosts), collect([ImageFileName, CommandLine, TaskExecCommand], limit=3)])
+      | sort(Hosts, order=desc)
+      #event_simpleName=ProcessRollup2
+      | (ParentBaseFileName=/^(wmiprvse|wsmprovhost)\.exe$/i FileName=/^(cmd|powershell|pwsh|rundll32|mshta)\.exe$/i)
+        or (FileName=/^cmd\.exe$/i CommandLine=/\/Q \/c .*(ADMIN\$|\\\\127\.0\.0\.1\\|2>&1)/i)
+      | table([@timestamp, ComputerName, UserName, ParentBaseFileName, CommandLine])
+    tested: null
+    attack:
+      - "T1569.002"
+      - "T1053.005"
+      - "T1047"
+      - "T1021.006"
+  - id: "ransomware-response/crowdstrike/s6-who-touched-the-backup-servers-the-veeam-console"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Recovery planes"
+    stage_ord: 6
+    platform: "CrowdStrike Falcon"
+    title: "Who touched the backup servers; the Veeam console by user"
+    why: "The backup server is a Windows host with a sensor, so logons to it and the Veeam console process are visible even when the backup product's own audit log is not. ESXi and vCenter run no sensor; their evidence is syslog in the SIEM or the host logs themselves (Linux / ESXi tab)."
+    how: null
+    fp: "Backup admins open the console daily, usually from the same workstation. A new user, a new source address, or the console on a host that is not the backup server is the lead; PowerCLI from a workstation that is not the virtualisation team's is the lead for ESXi."
+    query: |-
+      #event_simpleName=UserLogon
+      | ComputerName=/^(vbr01|vbr-proxy01)$/i
+      | LogonType=2 or LogonType=10 or LogonType=3
+      | groupBy([ComputerName, UserName, RemoteAddressIP4, LogonType], function=[count(as=Logons), min(@timestamp, as=First)])
+      | sort(First, order=asc)
+      #event_simpleName=ProcessRollup2
+      | FileName=/^(Veeam\.Backup\.Shell|Veeam\.Backup\.Manager|VeeamBackupShell|vmware-cmd|govc|vmrun)\.exe$/i
+        or ImageFileName=/\\Veeam\.Backup\.PowerShell|\\VMware\.PowerCLI/i
+      | groupBy([ComputerName, UserName, FileName], function=[count(as=Runs), min(@timestamp, as=First), collect([CommandLine], limit=3)])
+    tested: null
+    attack:
+      - "T1078"
+      - "T1490"
+  - id: "ransomware-response/crowdstrike/s7-transfer-tools-cloud-storage-destinations-and-ar"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Exfiltration"
+    stage_ord: 7
+    platform: "CrowdStrike Falcon"
+    title: "Transfer tools, cloud-storage destinations and archive staging"
+    why: "rclone to MEGA is still the most common path, but Dropbox, pCloud, Backblaze B2, Gofile and temp.sh are the alternates, and the data is usually archived with 7-Zip or WinRAR first. A hit makes this a data breach. The sensor has no byte counts; egress volume per host is a firewall or NetFlow question for the SIEM."
+    how: null
+    fp: "Corporate Dropbox or Backblaze agents resolve the same domains from every host; exclude by the resolving process once you have joined to ContextProcessId. An admin account archiving with a password on a file server at night is the attacker."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | ImageFileName=/\\(rclone|megasync|megacmd|winscp|filezilla|restic|curl)\.exe$/i
+        or CommandLine=/rclone|mega-put|--transfers|b2 upload|ftp:\/\//i
+        or (ImageFileName=/\\(7z|7za|rar|winrar)\.exe$/i CommandLine=/ a .*(-p|-hp|-mhe|-r|-v\d)/i)
+      | table([@timestamp, ComputerName, UserName, FileName, CommandLine])
+      #event_simpleName=DnsRequest
+      | DomainName=/mega\.(nz|io|co\.nz)$|dropbox(api)?\.com$|pcloud\.com$|backblazeb2\.com$|backblaze\.com$|gofile\.io$|temp\.sh$|file\.io$|ufile\.io$|filetransfer\.io$|transfer\.sh$|put\.io$|storj\.io$|wasabisys\.com$/i
+      | groupBy([ComputerName, DomainName], function=[count(as=Lookups), min(@timestamp, as=First)])
+      | sort(Lookups, order=desc)
+    tested: null
+    attack:
+      - "T1567.002"
+      - "T1560.001"
+      - "T1048"
+  - id: "ransomware-response/crowdstrike/s8-shadow-copy-boot-recovery-and-backup-catalog-del"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Impact preparation"
+    stage_ord: 8
+    platform: "CrowdStrike Falcon"
+    title: "Shadow-copy, boot-recovery and backup-catalog deletion; security services stopped"
+    why: "These run minutes before encryption. A hit with no encryption yet means contain now."
+    how: null
+    fp: "Patch cycles and DBAs stop SQL and backup services; a stop command across many hosts from one account, or delete shadows /all, is the finding."
+    query: |-
+      #event_simpleName=ProcessRollup2
+      | CommandLine=/vssadmin.*delete.*shadows|vssadmin.*resize.*shadowstorage|shadowcopy.*delete|bcdedit.*(recoveryenabled|bootstatuspolicy)|wbadmin.*delete.*catalog|Win32_ShadowCopy.*Delete/i
+        or CommandLine=/Set-MpPreference.*Disable|DisableRealtimeMonitoring|(net|sc)(\.exe)? (stop|config|delete) .*(WinDefend|Sense|MsMpSvc|CSFalconService|SentinelAgent|veeam|sql|vss|backup)/i
+        or (ImageFileName=/\\taskkill\.exe$/i CommandLine=/sql|veeam|backup/i)
+      | table([@timestamp, ComputerName, UserName, CommandLine])
+      | sort(@timestamp, order=asc)
+    tested: null
+    attack:
+      - "T1490"
+      - "T1685"
+      - "T1489"
+  - id: "ransomware-response/crowdstrike/s9-ransomware-detections-and-ransom-note-creation"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Encryption"
+    stage_ord: 9
+    platform: "CrowdStrike Falcon"
+    title: "Ransomware detections and ransom-note creation"
+    why: "Falcon raises its own ransomware detections (tactic Impact); the process tree in the detection is patient zero's payload. The note name identifies the variant and its contents give the extortion channel."
+    how: null
+    fp: "Detections are already tuned; the search is to find hosts the detection did not fire on because the sensor was killed first. Treat every host in the note query as encrypted until proven otherwise."
+    query: |-
+      Endpoint security > Detections: filter Tactic = Impact, Technique = Data Encrypted for Impact; open the process tree.
+      // Notes written across many hosts
+      #event_simpleName=/^(NewScriptWritten|NewExecutableWritten)$/ or #event_simpleName=ProcessRollup2
+      | FileName=/^(readme|restore|recover|decrypt|how_to|how-to|!!!|_readme|unlock)[^\\]*\.(txt|html?|hta)$/i
+      | groupBy([FileName, ContextBaseFileName], function=[count(aid, distinct=true, as=Hosts), min(@timestamp, as=First)])
+    tested: null
+    attack:
+      - "T1486"
+  - id: "ransomware-response/sentinelone/s1-rdp-and-network-logons-from-public-addresses-fir"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "SentinelOne"
+    title: "RDP and network logons from public addresses; first external logon per account"
+    why: "Most ransomware cases start with a VPN or RDP logon on a valid account, or an unpatched edge device. The first external logon on the account later seen moving laterally dates the intrusion. VPN authentication itself is in the appliance or SIEM, not the agent."
+    how: null
+    fp: "A published RDP gateway or a NAT'd VPN concentrator shows one public address on every logon; exclude those hosts and that address. Hosting-provider addresses on a user account are the lead."
+    query: |-
+      event.type = 'Login' AND event.login.loginIsSuccessful = true
+        AND event.login.type in ('REMOTE_INTERACTIVE','NETWORK')
+        AND NOT (src.endpoint.ip.address matches '^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.|127\\.)')
+      | group First = min(event.time), Hosts = estimate_distinct(endpoint.name), Logons = count() by event.login.userName, src.endpoint.ip.address
+      | sort - First
+    tested: null
+    attack:
+      - "T1133"
+      - "T1078"
+  - id: "ransomware-response/sentinelone/s2-remote-access-and-tunnelling-tools-first-seen-pe"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "SentinelOne"
+    title: "Remote-access and tunnelling tools, first seen per tool"
+    why: "Operators install legitimate RMM tools for persistent access and tunnel through them when the EDR blocks their C2. A tool first seen in the last days, on few hosts, is the lead."
+    how: null
+    fp: "Helpdesk RMM is legitimate on every host; the lead is a second RMM product, or the house product on servers where helpdesk never connects. Filter on tgt.process.signedStatus and the install path your deployment uses."
+    query: |-
+      event.type = 'Process Creation' AND (tgt.process.name contains ('anydesk','screenconnect','atera','splashtop','teamviewer','rustdesk','meshagent','client32','simplehelp','syncro','tacticalrmm','ngrok','chisel','plink','ligolo','cloudflared','gost','frpc')
+        OR tgt.process.cmdline contains ('--reverse','-R 0.0.0.0','tunnel run','client -connect'))
+      | group First = min(event.time), Events = count(), Hosts = estimate_distinct(endpoint.name) by tgt.process.name
+      | sort - First
+    tested: null
+    attack:
+      - "T1219"
+      - "T1572"
+  - id: "ransomware-response/sentinelone/s2-beacon-indicators-hollow-rundll32-and-sentinelon"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "SentinelOne"
+    title: "Beacon indicators — hollow rundll32 and SentinelOne's injection indicators"
+    why: "Cobalt Strike, Brute Ratel and Sliver loaders run under rundll32.exe with no arguments or inject into a signed process. The agent's behavioural indicators flag the injection even when the loader is new; the story line gives the parent."
+    how: null
+    fp: "AV, DLP and performance agents inject from Program Files and are excluded by the path filter; anything from a user-writable path is the lead."
+    query: |-
+      event.type = 'Process Creation' AND tgt.process.name = 'rundll32.exe' AND tgt.process.cmdline matches 'rundll32(\\.exe)?"?\\s*$'
+      | columns event.time, endpoint.name, src.process.name, src.process.cmdline
+      indicator.category in ('Injection','Evasion') AND src.process.image.path contains ('\\Users\\','\\ProgramData\\','\\Temp\\')
+      | group Hits = count(), Hosts = estimate_distinct(endpoint.name) by src.process.name, src.process.image.path, indicator.name
+    tested: null
+    attack:
+      - "T1055"
+      - "T1218.011"
+  - id: "ransomware-response/sentinelone/s3-ad-and-network-reconnaissance-tools"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Discovery"
+    stage_ord: 3
+    platform: "SentinelOne"
+    title: "AD and network reconnaissance tools"
+    why: "AdFind, SharpHound and network scanners run days before encryption; they date the dwell time."
+    how: null
+    fp: "Admin jump hosts run nltest and dsquery daily; a user workstation running them, or any host running SharpHound, is the finding."
+    query: |-
+      event.type = 'Process Creation' AND (tgt.process.name contains ('adfind','sharphound','netscan','nltest','dsquery','advanced_ip_scanner')
+        OR tgt.process.cmdline contains ('trustdmp','domain_trusts','-collectionmethod','objectcategory=computer','samaccounttype=805306368','Get-DomainComputer','Get-NetSession'))
+      | columns event.time, endpoint.name, src.process.user, tgt.process.name, tgt.process.cmdline
+    tested: null
+    attack:
+      - "T1087.002"
+      - "T1482"
+      - "T1046"
+      - "T1018"
+  - id: "ransomware-response/sentinelone/s4-credential-dumping-lsass-handles-known-tools-ntd"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "SentinelOne"
+    title: "Credential dumping — LSASS handles, known tools, NTDS.dit, Kerberoasting"
+    why: "A LSASS dump means every credential cached on that host is the attacker's; an NTDS copy is every hash in the domain. The cross-process event sees the handle itself, which catches nanodump and renamed tools that the command-line patterns miss. DCSync has no agent event; 4662 on the DCs lives in your SIEM (Splunk or Elastic tab)."
+    how: null
+    fp: "AV and backup agents open LSASS from Program Files or System32 and are excluded; anything else opening LSASS from a user-writable path is a finding. Backup agents create shadow copies on schedule; match account and time to the job."
+    query: |-
+      event.type = 'Open Remote Process Handle' AND tgt.process.name = 'lsass.exe'
+        AND NOT src.process.image.path contains ('\\Windows\\System32\\','\\Program Files')
+      | group Opens = count(), First = min(event.time) by endpoint.name, src.process.name, src.process.image.path, src.process.image.sha256
+      | sort - Opens
+      event.type = 'Process Creation' AND (
+           (tgt.process.cmdline contains 'comsvcs' AND tgt.process.cmdline contains 'MiniDump')
+        OR (tgt.process.name contains 'procdump' AND tgt.process.cmdline contains 'lsass')
+        OR tgt.process.cmdline contains ('sekurlsa','nanodump','lsassy','pypykatz','dumpert','handlekatz','mimikatz')
+        OR (tgt.process.name = 'ntdsutil.exe' AND tgt.process.cmdline contains ('ifm','create full'))
+        OR (tgt.process.name = 'vssadmin.exe' AND tgt.process.cmdline contains 'create shadow')
+        OR tgt.process.cmdline contains ('ntds.dit','kerberoast','GetUserSPNs','Invoke-Kerberoast'))
+      | columns event.time, endpoint.name, src.process.user, tgt.process.name, tgt.process.cmdline
+    tested: null
+    attack:
+      - "T1003.001"
+      - "T1003.003"
+      - "T1558.003"
+  - id: "ransomware-response/sentinelone/s5-one-account-or-source-reaching-many-hosts"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "SentinelOne"
+    title: "One account or source reaching many hosts"
+    why: "Fan-out from one source is how the payload is staged; the source host and account are what to contain first."
+    how: null
+    fp: "DCs, vulnerability scanners, backup servers, SCCM and monitoring pollers reach dozens of hosts; exclude their source addresses and service accounts first."
+    query: |-
+      event.type = 'Login' AND event.login.loginIsSuccessful = true AND event.login.type in ('NETWORK','REMOTE_INTERACTIVE')
+      | group Targets = estimate_distinct(endpoint.name), First = min(event.time), Last = max(event.time) by event.login.userName, src.endpoint.ip.address
+      | filter Targets > 10
+      | sort - Targets
+    tested: null
+    attack:
+      - "T1021.001"
+      - "T1021.002"
+  - id: "ransomware-response/sentinelone/s5-remote-execution-services-tasks-wmi-winrm-and-im"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "SentinelOne"
+    title: "Remote execution — services, tasks, WMI, WinRM and Impacket"
+    why: "PsExec is the minority. Most tooling installs a service with a random name, registers a task, or runs through WMI or WinRM; Impacket's wmiexec / smbexec leave a fixed cmd.exe /Q /c … \\\\127.0.0.1\\ADMIN$ shape. Each hit is a target host for the isolation list."
+    how: null
+    fp: "wmiprvse.exe spawning powershell.exe is also how SCCM and some RMMs run scripts; match the script path. The eight-letter name under Windows is the PsExec-clone signature."
+    query: |-
+      event.type = 'Process Creation' AND (
+           (src.process.name in ('wmiprvse.exe','wsmprovhost.exe') AND tgt.process.name in ('cmd.exe','powershell.exe','pwsh.exe','rundll32.exe','mshta.exe'))
+        OR (tgt.process.name = 'cmd.exe' AND tgt.process.cmdline contains '/Q /c' AND tgt.process.cmdline contains ('ADMIN$','\\127.0.0.1\\','2>&1'))
+        OR (src.process.name = 'services.exe' AND tgt.process.name in ('psexesvc.exe','paexec.exe','csexec.exe','remcomsvc.exe'))
+        OR (src.process.name = 'services.exe' AND tgt.process.image.path matches '\\\\Windows\\\\[A-Za-z]{8}\\.exe$'))
+      | group Hosts = estimate_distinct(endpoint.name), First = min(event.time) by src.process.name, tgt.process.name, tgt.process.cmdline
+      | sort - Hosts
+    tested: null
+    attack:
+      - "T1569.002"
+      - "T1053.005"
+      - "T1047"
+      - "T1021.006"
+  - id: "ransomware-response/sentinelone/s6-who-touched-the-backup-servers-the-veeam-console"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Recovery planes"
+    stage_ord: 6
+    platform: "SentinelOne"
+    title: "Who touched the backup servers; the Veeam console by user"
+    why: "The backup server is a Windows host with an agent, so logons to it and the Veeam console process are visible even when the backup product's own audit log is not. ESXi and vCenter run no agent; their evidence is syslog in the SIEM or the host logs themselves (Linux / ESXi tab)."
+    how: null
+    fp: "Backup admins open the console daily from the same workstation. A new user, a new source address, or the console on a host that is not the backup server is the lead; PowerCLI from a workstation that is not the virtualisation team's is the lead for ESXi."
+    query: |-
+      event.type = 'Login' AND event.login.loginIsSuccessful = true AND endpoint.name in ('vbr01','vbr-proxy01')
+      | group Logons = count(), First = min(event.time) by endpoint.name, event.login.userName, src.endpoint.ip.address, event.login.type
+      | sort - First
+      event.type = 'Process Creation' AND (tgt.process.name in ('Veeam.Backup.Shell.exe','Veeam.Backup.Manager.exe','govc.exe','vmrun.exe')
+        OR tgt.process.cmdline contains ('Veeam.Backup.PowerShell','VMware.PowerCLI','Connect-VIServer'))
+      | group Runs = count(), First = min(event.time) by endpoint.name, src.process.user, tgt.process.name
+    tested: null
+    attack:
+      - "T1078"
+      - "T1490"
+  - id: "ransomware-response/sentinelone/s7-transfer-tools-cloud-storage-destinations-and-ar"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Exfiltration"
+    stage_ord: 7
+    platform: "SentinelOne"
+    title: "Transfer tools, cloud-storage destinations and archive staging"
+    why: "rclone to MEGA is still the most common path, but Dropbox, pCloud, Backblaze B2, Gofile and temp.sh are the alternates, and the data is usually archived with 7-Zip or WinRAR first. A hit makes this a data breach. Byte counts per host are a firewall or NetFlow question for the SIEM."
+    how: null
+    fp: "Corporate Dropbox or Backblaze agents resolve the same domains from every host; exclude by src.process.name. An admin account archiving with a password on a file server at night is the attacker."
+    query: |-
+      (event.type = 'Process Creation' AND (tgt.process.name contains ('rclone','megasync','megacmd','winscp','filezilla','restic')
+          OR tgt.process.cmdline contains ('rclone','mega-put','--transfers','b2 upload','ftp://')
+          OR (tgt.process.name in ('7z.exe','7za.exe','rar.exe','winrar.exe') AND tgt.process.cmdline contains ' a ' AND tgt.process.cmdline contains ('-p','-hp','-mhe','-r','-v'))))
+        OR dns.request contains ('mega.nz','mega.io','mega.co.nz','dropbox.com','dropboxapi.com','pcloud.com','backblazeb2.com','backblaze.com','gofile.io','temp.sh','file.io','ufile.io','filetransfer.io','transfer.sh','put.io','storj.io','wasabisys.com')
+      | columns event.time, endpoint.name, src.process.user, src.process.name, tgt.process.cmdline, dns.request
+    tested: null
+    attack:
+      - "T1567.002"
+      - "T1560.001"
+      - "T1048"
+  - id: "ransomware-response/sentinelone/s8-shadow-copy-boot-recovery-and-backup-catalog-del"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Impact preparation"
+    stage_ord: 8
+    platform: "SentinelOne"
+    title: "Shadow-copy, boot-recovery and backup-catalog deletion; security services stopped"
+    why: "These run minutes before encryption. A hit with no encryption yet means contain now."
+    how: null
+    fp: "Patch cycles and DBAs stop SQL and backup services; a stop command across many hosts from one account, or delete shadows /all, is the finding."
+    query: |-
+      event.type = 'Process Creation' AND (
+           (tgt.process.name = 'vssadmin.exe' AND tgt.process.cmdline contains ('delete','resize'))
+        OR (tgt.process.cmdline contains 'shadowcopy' AND tgt.process.cmdline contains 'delete')
+        OR (tgt.process.name = 'bcdedit.exe' AND tgt.process.cmdline contains ('recoveryenabled','bootstatuspolicy'))
+        OR (tgt.process.name = 'wbadmin.exe' AND tgt.process.cmdline contains 'catalog')
+        OR tgt.process.cmdline contains ('Set-MpPreference','DisableRealtimeMonitoring')
+        OR (tgt.process.name in ('net.exe','net1.exe','sc.exe') AND tgt.process.cmdline contains ('stop','config','delete') AND tgt.process.cmdline contains ('WinDefend','Sense','SentinelAgent','veeam','sql','vss','backup'))
+        OR (tgt.process.name = 'taskkill.exe' AND tgt.process.cmdline contains ('sql','veeam','backup')))
+      | columns event.time, endpoint.name, src.process.user, tgt.process.cmdline
+    tested: null
+    attack:
+      - "T1490"
+      - "T1685"
+      - "T1489"
+  - id: "ransomware-response/sentinelone/s9-ransomware-indicators-and-ransom-note-creation"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Encryption"
+    stage_ord: 9
+    platform: "SentinelOne"
+    title: "Ransomware indicators and ransom-note creation"
+    why: "The agent's ransomware indicators name the writing process, which is patient zero's payload; the note name identifies the variant."
+    how: null
+    fp: "Indicators are already tuned; the note query finds hosts where the agent was killed before it could fire. Treat every host in it as encrypted until proven otherwise."
+    query: |-
+      indicator.category contains 'Ransomware'
+      | group Hits = count(), First = min(event.time) by endpoint.name, src.process.name, src.process.image.sha256
+      | sort - Hits
+      event.type = 'File Creation' AND tgt.file.name matches '^(?i)(readme|restore|recover|decrypt|how_to|how-to|!!!|_readme|unlock).*\\.(txt|html?|hta)$'
+      | group Hosts = estimate_distinct(endpoint.name), Notes = count() by tgt.file.name, src.process.name
+    tested: null
+    attack:
+      - "T1486"
+  - id: "ransomware-response/velociraptor/s1-first-external-rdp-logon-per-account-ssh-logins"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "Velociraptor"
+    title: "First external RDP logon per account; SSH logins on Linux"
+    why: "The first external logon on the account later seen moving laterally dates the intrusion. The RDP artifact parses Security 4624/4625 type 10, the TerminalServices 1149 and LocalSessionManager 21/25 logs together; the VPN appliance itself is in your SIEM."
+    how: null
+    fp: "A published RDP gateway or a NAT'd VPN concentrator shows one public address on every logon; filter it with UserNameWhitelist and the gateway host. Hosting-provider addresses on a user account are the lead."
+    query: |-
+      Hunt: Windows.EventLogs.RDPAuth
+        SourceIPRegex = ^(?!10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.)
+        DateAfter     = <start of the window>
+      Hunt: Linux.Syslog.SSHLogin   (accepted logins by user and source, from auth.log / secure)
+    tested: null
+    attack:
+      - "T1133"
+      - "T1078"
+  - id: "ransomware-response/velociraptor/s2-remote-access-and-tunnelling-tools-first-seen-pe"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "Velociraptor"
+    title: "Remote-access and tunnelling tools, first seen per tool; Cobalt Strike configs in memory"
+    why: "Operators install legitimate RMM tools for persistent access and tunnel through them when the EDR blocks their C2. Prefetch dates the first run even after the binary is deleted; the Cobalt Strike carver finds beacon configuration in running processes and gives the C2 address."
+    how: null
+    fp: "Helpdesk RMM is legitimate on every host; the lead is a second RMM product, or the house product on servers where helpdesk never connects. The carver scans every svchost.exe; it is slow on busy servers, so run it against the labelled hosts rather than the fleet."
+    query: |-
+      Hunt: Windows.System.Pslist
+        ProcessRegex = (?i)anydesk|screenconnect|atera|splashtop|teamviewer|rustdesk|meshagent|client32|simplehelp|syncro|tacticalrmm|ngrok|chisel|plink|ligolo|cloudflared|gost|frpc
+      Hunt: Windows.Forensics.Prefetch
+        binaryRegex  = (?i)anydesk|screenconnect|atera|splashtop|teamviewer|rustdesk|meshagent|client32|simplehelp|syncro|tacticalrmm|ngrok|chisel|plink|ligolo|cloudflared|gost|frpc
+      Hunt: Windows.Carving.CobaltStrike
+        ProcessRegex = (?i)rundll32|regsvr32|mshta|dllhost|werfault|notepad|svchost
+      Hunt: Windows.EventLogs.EvtxHunter     (Sysmon 17/18 named pipes, if Sysmon is deployed)
+        IocRegex = (?i)\\(msagent_[a-f0-9]{2}|postex_[a-f0-9]{4}|MSSE-\d+-server|status_\d+|mojo\.5688\.8052\.|DserNamePipe|SearchTextHarvester)
+    tested: null
+    attack:
+      - "T1219"
+      - "T1572"
+      - "T1055"
+  - id: "ransomware-response/velociraptor/s3-ad-and-network-reconnaissance-tools"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Discovery"
+    stage_ord: 3
+    platform: "Velociraptor"
+    title: "AD and network reconnaissance tools"
+    why: "AdFind, SharpHound and network scanners run days before encryption; they date the dwell time. Prefetch survives the tool being deleted; the event-log hunt catches the command lines when 4688 or Sysmon 1 is on."
+    how: null
+    fp: "Admin jump hosts run nltest and dsquery daily; a user workstation running them, or any host with a SharpHound prefetch file, is the finding."
+    query: |-
+      Hunt: Windows.Forensics.Prefetch
+        binaryRegex = (?i)adfind|sharphound|netscan|advanced_ip_scanner|nltest|dsquery
+      Hunt: Windows.EventLogs.EvtxHunter
+        IocRegex    = (?i)trustdmp|domain_trusts|collectionmethod|objectcategory=computer|samaccounttype=805306368|Get-DomainComputer|Get-NetSession
+      Hunt: Windows.Forensics.SRUM    (network bytes per application: a scanner shows thousands of small connections)
+    tested: null
+    attack:
+      - "T1087.002"
+      - "T1482"
+      - "T1046"
+      - "T1018"
+  - id: "ransomware-response/velociraptor/s4-credential-dumping-lsass-ntds-dit-dcsync-and-ker"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "Velociraptor"
+    title: "Credential dumping — LSASS, NTDS.dit, DCSync and Kerberoasting"
+    why: "A LSASS dump means every credential cached on that host is the attacker's; an NTDS copy is every hash in the domain. The Kerberoasting artifact parses 4769 for RC4 tickets directly; the DCSync hunt runs on the domain controllers only."
+    how: null
+    fp: "Backup agents and IFM media creation produce legitimate 4662 and shadow-copy events from the backup service account; add it to WhitelistRegex. A.dmp named after LSASS or an ntds.dit outside C:\\Windows\\NTDS has no legitimate reason."
+    query: |-
+      Hunt (DCs): Windows.EventLogs.EvtxHunter
+        IocRegex  = 1131f6a[ad]-9c07-11d1-f79f-00c04fc2dcd2|89e95b76-444d-4c62-991a-0facbeda640c
+        IdRegex   = ^4662$
+        WhitelistRegex = (?i)MSOL_|\$$
+      Hunt (DCs): Windows.EventLogs.Kerberoasting
+      Hunt: Windows.EventLogs.EvtxHunter
+        IocRegex  = (?i)comsvcs.+MiniDump|procdump.+lsass|sekurlsa|nanodump|lsassy|pypykatz|dumpert|handlekatz|mimikatz|ntdsutil.+(ifm|create full)|ntds\.dit|reg(\.exe)? save hklm\\system
+      Hunt: Windows.Search.FileFinder
+        Glob = C:/{Users,Windows/Temp,ProgramData,Temp}/**/{lsass*.dmp,*.dmp,ntds.dit,SYSTEM,SAM}
+        Calculate_Hash = Y
+    tested: null
+    attack:
+      - "T1003.001"
+      - "T1003.003"
+      - "T1003.006"
+      - "T1558.003"
+  - id: "ransomware-response/velociraptor/s5-one-account-or-source-reaching-many-hosts-remote"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "Velociraptor"
+    title: "One account or source reaching many hosts; remote services, tasks and Impacket"
+    why: "Fan-out from one source is how the payload is staged; the source host and account are what to contain first. The service-creation artifact finds every 7045 with a %COMSPEC% or random-name image, which is most PsExec clones; the task artifact pairs 4698 with the TaskScheduler log."
+    how: null
+    fp: "SCCM, Intune and monitoring agents create the same service or task on every host from the management server; whitelist its name with TaskNameWhitelist. DCs, scanners and backup servers reach dozens of hosts; exclude their addresses from the RDP results."
+    query: |-
+      Hunt: Windows.EventLogs.RDPAuth
+        DateAfter = <start of the window>     (group the results by source IP and user; > 10 targets per source is the lead)
+      Hunt: Windows.EventLogs.ServiceCreationComspec
+      Hunt: Windows.Detection.PsexecService
+      Hunt: Windows.EventLogs.ScheduledTasks
+        DateAfter = <start of the window>
+        TaskActionRegex = (?i)cmd|powershell|rundll32|mshta|wscript|\.bat|\.vbs|\.ps1
+      Hunt: Windows.EventLogs.EvtxHunter
+        IocRegex = (?i)\/Q \/c .*(ADMIN\$|127\.0\.0\.1|2>&1)|wsmprovhost|wmiprvse.+(cmd|powershell)
+    tested: null
+    attack:
+      - "T1021.001"
+      - "T1021.002"
+      - "T1569.002"
+      - "T1053.005"
+      - "T1047"
+  - id: "ransomware-response/velociraptor/s6-backup-server-logons-and-the-veeam-audit-log"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Recovery planes"
+    stage_ord: 6
+    platform: "Velociraptor"
+    title: "Backup server logons and the Veeam audit log"
+    why: "The Backup & Replication server is a Windows client, so its Security log and the Veeam Backup event log are collectable; the log records every restore point deleted (10050), job deleted (23090), repository removed (28200) and MFA disabled (40201). ESXi and vCenter have no client; use the Linux / ESXi tab on the hosts themselves."
+    how: null
+    fp: "Retention runs delete restore points on every job cycle; the finding is a deletion outside the job schedule or by an interactive user. Backup admins log on daily; a new source or account is the lead."
+    query: |-
+      Hunt (backup servers): Windows.EventLogs.RDPAuth
+        DateAfter = <start of the window>
+      Hunt (backup servers): Windows.EventLogs.EvtxHunter
+        EvtxGlob = C:/Windows/System32/winevt/Logs/Veeam Backup.evtx
+        IdRegex  = ^(10050|23050|23090|28200|30200|31400|40201|40204|42401|41800)$
+      Hunt (DCs): Windows.EventLogs.EvtxHunter
+        IdRegex  = ^(4728|4732|4756)$
+        IocRegex = (?i)ESX Admins
+    tested: null
+    attack:
+      - "T1078"
+      - "T1490"
+  - id: "ransomware-response/velociraptor/s7-transfer-tools-rclone-configs-and-archive-stagin"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Exfiltration"
+    stage_ord: 7
+    platform: "Velociraptor"
+    title: "Transfer tools, rclone configs and archive staging"
+    why: "rclone to MEGA is still the most common path and the data is usually archived with 7-Zip or WinRAR first. The rclone config names the destination account; the USN journal shows the archives even after they were deleted. Egress bytes per host are in your firewall, not on the endpoint."
+    how: null
+    fp: "Users zip project folders; the attacker's archives are on file servers, created by an admin account in one burst, often split into numbered volumes. A rclone config on an admin workstation is the finding regardless."
+    query: |-
+      Hunt: Windows.Forensics.Prefetch
+        binaryRegex = (?i)rclone|megasync|megacmd|winscp|filezilla|restic|7z|7za|rar|winrar
+      Hunt: Windows.Search.FileFinder
+        Glob = C:/Users/*/AppData/Roaming/rclone/rclone.conf
+        Upload_File = Y
+      Hunt: Windows.Forensics.Usn
+        FileNameRegex = (?i)\.(7z|rar|zip|001)$
+        DateAfter     = <start of the window>
+      Hunt: Windows.Network.NetstatEnriched   (live connections, while the host is up)
+    tested: null
+    attack:
+      - "T1567.002"
+      - "T1560.001"
+      - "T1048"
+  - id: "ransomware-response/velociraptor/s8-shadow-copy-boot-recovery-and-backup-catalog-del"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Impact preparation"
+    stage_ord: 8
+    platform: "Velociraptor"
+    title: "Shadow-copy, boot-recovery and backup-catalog deletion; security services stopped; GPO changes"
+    why: "These run minutes before encryption. A hit with no encryption yet means contain now. GPO changes are the deployment channel from the T+45–60 step."
+    how: null
+    fp: "Patch cycles and DBAs stop SQL and backup services; GPO edits happen daily. The finding is a stop across many hosts from one account, or a GPO edit by an account that does not administer GPOs."
+    query: |-
+      Hunt: Windows.EventLogs.EvtxHunter
+        IocRegex = (?i)vssadmin.+(delete.+shadows|resize.+shadowstorage)|shadowcopy.+delete|recoveryenabled|bootstatuspolicy|wbadmin.+delete.+catalog|Set-MpPreference.+Disable|DisableRealtimeMonitoring|(net|sc)(\.exe)? (stop|config|delete) .*(WinDefend|Sense|veeam|sql|vss|backup)
+      Hunt (DCs): Windows.EventLogs.EvtxHunter
+        IdRegex  = ^(5136|5137)$
+        IocRegex = groupPolicyContainer
+      Hunt: Windows.System.CriticalServices    (Defender, Sense, Falcon, SentinelAgent, VSS stopped or disabled)
+    tested: null
+    attack:
+      - "T1490"
+      - "T1685"
+      - "T1484.001"
+  - id: "ransomware-response/velociraptor/s9-mass-file-changes-by-one-process-ransom-notes"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Encryption"
+    stage_ord: 9
+    platform: "Velociraptor"
+    title: "Mass file changes by one process; ransom notes"
+    why: "The process doing the writing is patient zero's payload; the note name identifies the variant and its contents give the extortion channel."
+    how: null
+    fp: "Software readme files match the name pattern; the ransom note is the same file in thousands of folders on one host, created within minutes. Treat every host returning it as encrypted until proven otherwise."
+    query: |-
+      Hunt: Windows.Forensics.Usn
+        FileNameRegex = (?i)^(readme|restore|recover|decrypt|how_to|how-to|!!!|_readme|unlock).*\.(txt|html?|hta)$
+        DateAfter     = <start of the window>
+      Hunt: Windows.Search.FileFinder
+        Glob = C:/**/{readme,RESTORE,RECOVER,DECRYPT,how_to,HOW_TO}*.{txt,html,hta}
+        Upload_File = Y
+      Hunt: Windows.System.Pslist     (then Windows.Memory.ProcessDump with PidRegex for the writer)
+    tested: null
+    attack:
+      - "T1486"
+  - id: "ransomware-response/velociraptor/s10-collect-the-note-and-extract-the-contact-channel"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 10 · Extortion"
+    stage_ord: 10
+    platform: "Velociraptor"
+    title: "Collect the note and extract the contact channel"
+    why: "The note carries the.onion URL, Tox id or email and the case id the negotiator needs; it is also the sample the IR firm and law enforcement use to attribute the group. Mail-side contact and leak-site listings are in your mail gateway and threat intel, not on the endpoint."
+    how: null
+    fp: "One note per variant is enough for identification; collect one per host only if the case ids differ, which some groups use to track which victim system was hit."
+    query: |-
+      Hunt: Windows.Search.FileFinder
+        Glob = C:/**/{readme,RESTORE,RECOVER,DECRYPT,how_to,HOW_TO}*.{txt,html,hta}
+        Upload_File = Y
+        Calculate_Hash = Y
+      Then in a notebook:
+        SELECT * FROM source(artifact="Windows.Search.FileFinder")
+        WHERE Upload AND read_file(filename=Upload.Path, accessor="fs") =~ "(?i)\.onion|tox|session id|@(proton|onionmail|tutanota)"
+    tested: null
+    attack:
+      - "T1657"
+  - id: "ransomware-response/splunk/s1-vpn-and-rdp-logons-from-new-countries-first-exte"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "Splunk"
+    title: "VPN and RDP logons from new countries; first external logon per account"
+    why: "Most ransomware cases start with a VPN or RDP logon on a valid account, or an unpatched edge device. The first external logon on the account later seen moving laterally dates the intrusion. The CIM Authentication model covers whichever VPN or firewall add-on you run."
+    how: null
+    fp: "Travelling staff give two countries; three, or a hosting-provider ASN, is the lead. A published RDP gateway shows every user from one public address; exclude it by host."
+    query: |-
+      | tstats earliest(_time) as first latest(_time) as last count from datamodel=Authentication
+          where Authentication.action=success earliest=-30d
+          by Authentication.user Authentication.src Authentication.app
+      | iplocation Authentication.src
+      | stats dc(Country) as countries values(Country) as country_list min(first) as first by Authentication.user
+      | where countries > 1 | sort first
+      // RDP straight from the internet
+      index=windows source="XmlWinEventLog:Security" EventCode=4624 LogonType=10 earliest=-30d
+        NOT IpAddress IN ("10.*","172.16.*","172.17.*","172.18.*","172.19.*","172.2*","172.30.*","172.31.*","192.168.*","127.*","-")
+      | stats earliest(_time) as first dc(host) as hosts by TargetUserName IpAddress | convert ctime(first)
+    tested: null
+    attack:
+      - "T1133"
+      - "T1078"
+  - id: "ransomware-response/splunk/s2-remote-access-and-tunnelling-tools-first-seen-pe"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "Remote-access and tunnelling tools, first seen per tool"
+    why: "Operators install legitimate RMM tools for persistent access and tunnel through them when the EDR blocks their C2. A tool first seen in the last days, on few hosts, is the lead."
+    how: null
+    fp: "Helpdesk RMM is legitimate on every host; the lead is a second RMM product, or the house product on servers where helpdesk never connects. Filter on the signer (Sysmon Signature ) and install path your deployment uses."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 earliest=-14d
+        (Image="*anydesk*" OR Image="*screenconnect*" OR Image="*atera*" OR Image="*splashtop*" OR Image="*teamviewer*"
+         OR Image="*rustdesk*" OR Image="*meshagent*" OR Image="*client32*" OR Image="*simplehelp*" OR Image="*syncro*" OR Image="*tacticalrmm*"
+         OR Image="*ngrok*" OR Image="*chisel*" OR Image="*plink*" OR Image="*ligolo*" OR Image="*cloudflared*" OR Image="*gost*" OR Image="*frpc*"
+         OR CommandLine="*--reverse*" OR CommandLine="*-R 0.0.0.0*" OR CommandLine="*tunnel run*" OR CommandLine="*client -connect*")
+      | stats min(_time) as first_seen dc(host) as hosts values(CommandLine) as cmd by Image
+      | convert ctime(first_seen) | sort first_seen
+    tested: null
+    attack:
+      - "T1219"
+      - "T1572"
+  - id: "ransomware-response/splunk/s2-beacon-indicators-named-pipes-sysmon-17-18-hollo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "Splunk"
+    title: "Beacon indicators — named pipes (Sysmon 17/18), hollow rundll32, remote threads (Sysmon 8)"
+    why: "Cobalt Strike, Brute Ratel and Sliver leave default pipe names and a hollow rundll32.exe parent; Sysmon 8 records the loader creating a thread in another process. These date the foothold when the RMM hunt is empty."
+    how: null
+    fp: "AV, DLP and performance agents create remote threads from Program Files and are excluded; anything from Users, ProgramData or Temp is the lead. Pipe names are the defaults; a changed malleable profile will not hit this."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" earliest=-14d
+        ((EventCode IN (17,18) PipeName IN ("\\msagent_*","\\postex_*","\\MSSE-*-server","\\status_*","\\mojo.5688.8052.*","\\DserNamePipe*","\\SearchTextHarvester*","\\mypipe-f*","\\mypipe-h*"))
+         OR (EventCode=1 Image="*\\rundll32.exe" (CommandLine="*rundll32.exe" OR CommandLine="*rundll32.exe\"" OR CommandLine="rundll32"))
+         OR (EventCode=8 NOT SourceImage="C:\\Program Files*" NOT SourceImage="C:\\Windows\\System32\\*"))
+      | table _time host EventCode Image SourceImage TargetImage PipeName ParentImage CommandLine
+    tested: null
+    attack:
+      - "T1055"
+      - "T1218.011"
+      - "T1071.001"
+  - id: "ransomware-response/splunk/s3-ad-and-network-reconnaissance-tools-port-scan-fa"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Discovery"
+    stage_ord: 3
+    platform: "Splunk"
+    title: "AD and network reconnaissance tools; port-scan fan-out"
+    why: "AdFind, SharpHound and network scanners run days before encryption; they date the dwell time. Sysmon 3 shows a scanner as one process reaching hundreds of ports or hosts in minutes."
+    how: null
+    fp: "Vulnerability scanners, monitoring pollers, browsers and SCCM exceed the fan-out threshold; exclude those hosts and images. Admin jump hosts run nltest daily; a user workstation running it, or any host running SharpHound, is the finding."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 earliest=-14d
+        (Image="*\\adfind.exe" OR Image="*\\sharphound.exe" OR Image="*\\netscan.exe" OR Image="*advanced_ip_scanner*" OR Image="*\\nltest.exe" OR Image="*\\dsquery.exe"
+         OR CommandLine="*trustdmp*" OR CommandLine="*domain_trusts*" OR CommandLine="*-collectionmethod*" OR CommandLine="*objectcategory=computer*" OR CommandLine="*samaccounttype=805306368*")
+      | table _time host User Image CommandLine
+      // one process, many destinations
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=3 Initiated=true earliest=-14d
+      | bin _time span=10m
+      | stats dc(DestinationIp) as hosts dc(DestinationPort) as ports by _time host Image
+      | where hosts > 50 OR ports > 20 | sort - hosts
+    tested: null
+    attack:
+      - "T1087.002"
+      - "T1482"
+      - "T1046"
+      - "T1018"
+  - id: "ransomware-response/splunk/s4-lsass-handle-access-known-tools-and-ntds-dit-the"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "Splunk"
+    title: "LSASS handle access, known tools and NTDS.dit theft"
+    why: "A LSASS dump means every credential cached on that host is the attacker's; an NTDS copy is every hash in the domain. Sysmon 10 sees the handle, which catches nanodump and renamed tools that command lines miss."
+    how: null
+    fp: "AV engines, EDR agents and crash-dump tooling open LSASS from Program Files or System32 and are excluded; anything else opening LSASS from a user-writable path is a finding. Backup agents create shadow copies on schedule; match account and time to the job."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" earliest=-14d
+        ((EventCode=1 (CommandLine="*comsvcs*MiniDump*" OR CommandLine="*sekurlsa*" OR CommandLine="*nanodump*" OR CommandLine="*lsassy*" OR CommandLine="*pypykatz*" OR CommandLine="*dumpert*" OR CommandLine="*mimikatz*"
+                       OR (Image="*\\procdump*" CommandLine="*lsass*") OR (Image="*\\taskmgr.exe" CommandLine="*lsass*")
+                       OR (Image="*\\ntdsutil.exe" (CommandLine="*ifm*" OR CommandLine="*create full*")) OR (Image="*\\vssadmin.exe" CommandLine="*create shadow*")
+                       OR CommandLine="*ntds.dit*" OR CommandLine="*reg* save*hklm\\system*"))
+         OR (EventCode=10 TargetImage="*\\lsass.exe" GrantedAccess IN ("0x1010","0x1410","0x1438","0x143a","0x1fffff") NOT SourceImage="C:\\Program Files*" NOT SourceImage="C:\\Windows\\System32\\*")
+         OR (EventCode=11 TargetFilename="*ntds.dit" NOT TargetFilename="C:\\Windows\\NTDS\\*"))
+      | table _time host User EventCode SourceImage TargetImage GrantedAccess CommandLine TargetFilename
+    tested: null
+    attack:
+      - "T1003.001"
+      - "T1003.003"
+  - id: "ransomware-response/splunk/s4-dcsync-and-kerberoasting"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "Splunk"
+    title: "DCSync and Kerberoasting"
+    why: "DCSync pulls hashes over the replication protocol with no process on the DC; Kerberoasting cracks service-account passwords offline. Both are visible only in the DC Security log — 4662 with the replication GUIDs, 4769 with RC4 tickets."
+    how: null
+    fp: "Entra Connect ( MSOL_ or the AD DS connector account) and some backup or identity products replicate legitimately; name them. Legacy applications still request RC4 tickets, but one user requesting five or more distinct SPNs in an hour is Rubeus, not an application."
+    query: |-
+      index=windows source="XmlWinEventLog:Security" EventCode=4662 ObjectServer=DS earliest=-30d
+        (Properties="*1131f6aa-9c07-11d1-f79f-00c04fc2dcd2*" OR Properties="*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2*" OR Properties="*89e95b76-444d-4c62-991a-0facbeda640c*")
+        NOT SubjectUserName="*$" NOT SubjectUserName="MSOL_*"
+      | table _time host SubjectUserName SubjectDomainName
+      index=windows source="XmlWinEventLog:Security" EventCode=4769 TicketEncryptionType=0x17 Status=0x0 earliest=-14d
+        NOT ServiceName="*$" NOT ServiceName="krbtgt"
+      | bin _time span=1h
+      | stats dc(ServiceName) as services values(ServiceName) as names by _time TargetUserName IpAddress
+      | where services > 5 | sort - services
+    tested: null
+    attack:
+      - "T1003.006"
+      - "T1558.003"
+  - id: "ransomware-response/splunk/s5-one-account-or-source-reaching-many-hosts-admin"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "Splunk"
+    title: "One account or source reaching many hosts; admin-share writes"
+    why: "Fan-out from one source is how the payload is staged; the source host and account are what to contain first. 5145 on ADMIN$ or C$ with write access shows the copy itself (needs File Share object-access auditing on the targets)."
+    how: null
+    fp: "DCs, vulnerability scanners, backup servers, SCCM and monitoring pollers reach dozens of hosts and write to admin shares on schedule; exclude their addresses and service accounts first."
+    query: |-
+      index=windows source="XmlWinEventLog:Security" EventCode=4624 LogonType IN (3,10) earliest=-7d
+      | stats dc(host) as targets earliest(_time) as first latest(_time) as last by TargetUserName IpAddress
+      | where targets > 10 | convert ctime(first) ctime(last) | sort - targets
+      index=windows source="XmlWinEventLog:Security" EventCode=5145 ShareName IN ("\\\\*\\ADMIN$","\\\\*\\C$") AccessMask IN ("0x2","0x6","0x12019f") earliest=-7d
+      | stats dc(host) as targets values(RelativeTargetName) as files by SubjectUserName IpAddress
+      | where targets > 3 | sort - targets
+    tested: null
+    attack:
+      - "T1021.001"
+      - "T1021.002"
+  - id: "ransomware-response/splunk/s5-remote-execution-service-installs-7045-remote-ta"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "Splunk"
+    title: "Remote execution — service installs (7045), remote tasks (4698), WMI, WinRM and Impacket"
+    why: "PsExec is the minority. Most tooling installs a service with a random name, registers a task, or runs through WMI or WinRM; Impacket's wmiexec / smbexec leave a fixed cmd.exe /Q /c … \\\\127.0.0.1\\ADMIN$ shape. Each hit is a target host for the isolation list."
+    how: null
+    fp: "SCCM, Intune, GPO software installs and monitoring agents install the same service on every host; the random eight-letter or hex name is the PsExec-clone signature. wmiprvse.exe spawning powershell.exe is also how SCCM and some RMMs run scripts; match the script path."
+    query: |-
+      index=windows source="XmlWinEventLog:System" EventCode=7045 earliest=-7d
+      | rex field=ServiceName "^(?<svc>[A-Za-z]{8}|[0-9a-f]{8,})$"
+      | stats dc(host) as hosts values(ImagePath) as paths by ServiceName svc
+      | where hosts > 3 OR isnotnull(svc) OR ServiceName IN ("PSEXESVC","csexecsvc","PAExec*","RemComSvc") OR match(paths, "(?i)%COMSPEC%|cmd\.exe|powershell|ADMIN\$")
+      | sort - hosts
+      index=windows source="XmlWinEventLog:Security" EventCode=4698 earliest=-7d
+      | stats dc(host) as hosts values(TaskName) as tasks by SubjectUserName
+      | where hosts > 3
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 earliest=-7d
+        ((ParentImage IN ("*\\wmiprvse.exe","*\\wsmprovhost.exe") Image IN ("*\\cmd.exe","*\\powershell.exe","*\\pwsh.exe","*\\rundll32.exe","*\\mshta.exe"))
+         OR (Image="*\\cmd.exe" CommandLine="*/Q /c*" (CommandLine="*ADMIN$*" OR CommandLine="*\\127.0.0.1\\*" OR CommandLine="*2>&1*")))
+      | table _time host User ParentImage CommandLine
+    tested: null
+    attack:
+      - "T1569.002"
+      - "T1053.005"
+      - "T1047"
+      - "T1021.006"
+  - id: "ransomware-response/splunk/s6-esxi-and-vcenter-audit-events-backup-console-log"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Recovery planes"
+    stage_ord: 6
+    platform: "Splunk"
+    title: "ESXi and vCenter audit events; backup console logons, deletions and retention changes"
+    why: "Enabling SSH or the ESXi Shell, leaving lockdown mode and root logins on a host normally managed only through vCenter is the attacker lining up the hypervisor encryptor; backup deletion follows (94% of victims saw their backups attacked — Sophos, State of Ransomware 2024). ESXi writes VOB audit records; Veeam writes an event id for every restore point deleted, job changed, repository removed and MFA toggled. If the ESXi search is empty, confirm syslog forwarding before concluding nothing happened."
+    how: "ESXi sourcetypes are vmware:esxlog:* from the Splunk Add-on for VMware ESXi Logs. Veeam ids are from the Veeam Backup & Replication Event Reference: 10050 restore point deleted, 23050 job settings updated, 23090 job deleted, 28200 repository deleted, 30200 scale-out repository deleted, 31400 user/group deleted, 40201 MFA disabled, 40204 MFA for user disabled, 42401 four-eyes authorisation disabled, 41800 attempt to delete backup failed."
+    fp: "Patch windows and vendor support sessions enable SSH legitimately; match each enable event to a change record. Retention runs delete restore points on every job cycle; the finding is a deletion outside the schedule or by an interactive user rather than the Veeam service account."
+    query: |-
+      sourcetype=vmware:esxlog:* earliest=-14d
+        ("esx.audit.ssh.enabled" OR "esx.audit.shell.enabled" OR "esx.audit.lockdownmode.disabled" OR "esx.audit.account.loginfailures" OR "esx.audit.account.locked" OR "esx.audit.dcui.enabled" OR "User root@" OR "logged in as")
+      | table _time host sourcetype _raw | sort _time
+      index=windows source="WinEventLog:Veeam Backup" EventCode IN (10050,23050,23090,28200,30200,31400,40201,40204,42401,41800) earliest=-30d
+      | table _time host EventCode Message
+      index=windows source="XmlWinEventLog:Security" EventCode=4624 LogonType IN (2,10) earliest=-30d (host IN ("vbr01","vbr-proxy01") OR TargetUserName IN ("svc-veeam","backup-admin"))
+      | stats count earliest(_time) as first by host TargetUserName IpAddress LogonType | convert ctime(first) | sort first
+      index=windows source="XmlWinEventLog:Security" EventCode IN (4728,4732,4756) TargetUserName="ESX Admins" earliest=-30d
+      | table _time host SubjectUserName MemberName
+    tested: null
+    attack:
+      - "T1021.004"
+      - "T1685"
+      - "T1078"
+      - "T1490"
+  - id: "ransomware-response/splunk/s7-transfer-tools-destinations-archive-staging-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Exfiltration"
+    stage_ord: 7
+    platform: "Splunk"
+    title: "Transfer tools, destinations, archive staging and bytes out per host"
+    why: "rclone to MEGA is still the most common path, but Dropbox, pCloud, Backblaze B2, Gofile and temp.sh are the alternates, and the data is usually archived with 7-Zip or WinRAR first. Bytes out per internal host over the dwell window, from the firewall or Zeek through the Network_Traffic model, is the number the breach notification needs."
+    how: null
+    fp: "Mail servers, proxies, backup-to-cloud agents and video-conferencing hosts top the bytes-out list every day; compare against the previous 14 days per host rather than ranking once. Users zipping a project folder trip the archive pattern; the attacker's archives are on file servers, by an admin account, at night, split into volumes."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" earliest=-14d
+        ((EventCode=1 (Image IN ("*\\rclone.exe","*\\megasync.exe","*\\megacmd.exe","*\\winscp.exe","*\\filezilla.exe","*\\restic.exe") OR CommandLine IN ("*rclone*","*mega-put*","*--transfers*","*b2 upload*")
+                       OR (Image IN ("*\\7z.exe","*\\7za.exe","*\\rar.exe","*\\winrar.exe") CommandLine="* a *" (CommandLine="* -p*" OR CommandLine="* -hp*" OR CommandLine="*-mhe*" OR CommandLine="* -v*"))))
+         OR (EventCode=22 QueryName IN ("*mega.nz","*mega.io","*mega.co.nz","*dropbox.com","*dropboxapi.com","*pcloud.com","*backblazeb2.com","*backblaze.com","*gofile.io","*temp.sh","*file.io","*ufile.io","*filetransfer.io","*transfer.sh","*put.io","*storj.io","*wasabisys.com")))
+      | table _time host User Image CommandLine QueryName
+      // bytes out per internal source over the dwell window (firewall / Zeek conn via CIM)
+      | tstats sum(All_Traffic.bytes_out) as bytes_out dc(All_Traffic.dest) as dests from datamodel=Network_Traffic
+          where All_Traffic.src="10.0.0.0/8" NOT All_Traffic.dest="10.0.0.0/8" earliest=-14d
+          by All_Traffic.src
+      | eval gb_out=round(bytes_out/1073741824,1) | sort - bytes_out | head 20
+    tested: null
+    attack:
+      - "T1567.002"
+      - "T1560.001"
+      - "T1048"
+  - id: "ransomware-response/splunk/s8-shadow-copy-boot-recovery-and-backup-catalog-del"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Impact preparation"
+    stage_ord: 8
+    platform: "Splunk"
+    title: "Shadow-copy, boot-recovery and backup-catalog deletion; security services stopped; GPO changes"
+    why: "These run minutes before encryption. A hit with no encryption yet means contain now. GPO changes (5136/5137 on DCs, needs Directory Service Changes auditing) are the deployment channel from the T+45–60 step."
+    how: null
+    fp: "Patch cycles and DBAs stop SQL and backup services; GPO edits happen daily in a large estate. The finding is a stop across many hosts from one account, or a GPO edit by an account that does not administer GPOs."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 earliest=-3d
+        ((Image="*\\vssadmin.exe" (CommandLine="*delete*shadows*" OR CommandLine="*resize*shadowstorage*")) OR (Image="*\\wmic.exe" CommandLine="*shadowcopy*delete*")
+         OR (Image="*\\bcdedit.exe" (CommandLine="*recoveryenabled*" OR CommandLine="*bootstatuspolicy*")) OR (Image="*\\wbadmin.exe" CommandLine="*delete*catalog*")
+         OR CommandLine="*Set-MpPreference*Disable*" OR CommandLine="*DisableRealtimeMonitoring*"
+         OR (Image IN ("*\\net.exe","*\\net1.exe","*\\sc.exe") (CommandLine="*stop*" OR CommandLine="*config*" OR CommandLine="*delete*") (CommandLine="*WinDefend*" OR CommandLine="*Sense*" OR CommandLine="*CSFalconService*" OR CommandLine="*SentinelAgent*" OR CommandLine="*veeam*" OR CommandLine="*sql*" OR CommandLine="*vss*" OR CommandLine="*backup*"))
+         OR (Image="*\\taskkill.exe" (CommandLine="*sql*" OR CommandLine="*veeam*" OR CommandLine="*backup*")))
+      | table _time host User CommandLine
+      index=windows source="XmlWinEventLog:Security" EventCode IN (5136,5137) ObjectClass=groupPolicyContainer earliest=-7d
+      | table _time host SubjectUserName ObjectDN AttributeLDAPDisplayName AttributeValue
+    tested: null
+    attack:
+      - "T1490"
+      - "T1685"
+      - "T1484.001"
+      - "T1489"
+  - id: "ransomware-response/splunk/s9-mass-file-changes-by-one-process-ransom-notes"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Encryption"
+    stage_ord: 9
+    platform: "Splunk"
+    title: "Mass file changes by one process; ransom notes"
+    why: "The process doing the writing is patient zero's payload; the note name identifies the variant."
+    how: null
+    fp: "Backup agents, DCs (SYSVOL), build servers, compilers, Outlook and OneDrive sync exceed 500 file writes in five minutes on their own; exclude by Hashes of your known software, not by host. Sysmon 11 only fires for the extensions in your Sysmon config; a config that logs every create is what makes this hunt work."
+    query: |-
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=11 earliest=-1d
+      | bin _time span=5m
+      | stats count as files dc(TargetFilename) as names by _time host Image Hashes
+      | where files > 500 | sort - files
+      index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=11 earliest=-1d
+        TargetFilename IN ("*\\readme*.txt","*\\readme*.html","*\\readme*.hta","*\\RESTORE*.txt","*\\RECOVER*.txt","*\\DECRYPT*.txt","*\\DECRYPT*.html","*\\how_to*.txt","*\\how_to*.html","*\\!!!*.txt","*\\_readme.txt","*\\unlock*.txt")
+      | stats dc(host) as hosts count as notes values(Image) as writer by TargetFilename
+    tested: null
+    attack:
+      - "T1486"
+  - id: "ransomware-response/splunk/s10-ransom-contact-by-mail"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 10 · Extortion"
+    stage_ord: 10
+    platform: "Splunk"
+    title: "Ransom contact by mail"
+    why: "The first contact usually arrives by email to executives or the generic mailbox, from a privacy mail provider, within hours of encryption. Finding every message tells counsel who has been contacted. Leak-site listings are not in any log; threat intel or the IR firm monitors the group's site."
+    how: "The sourcetype below is the Splunk Add-on for Microsoft Office 365 message trace; substitute your mail gateway's sourcetype and fields (CIM Email model: src_user, subject, recipient )."
+    fp: "Legitimate mail from Proton or Tuta users exists; the subject filter is what separates the contact from ordinary mail. Expect phishing that imitates the extortionist once the incident is public."
+    query: |-
+      sourcetype="ms:o365:reporting:messagetrace" earliest=-7d
+        (SenderAddress IN ("*@onionmail.org","*@proton.me","*@protonmail.com","*@tutanota.com","*@tuta.io","*@cock.li","*@mail2tor.com","*@skiff.com")
+         OR Subject IN ("*your network*","*your files*","*encrypted*","*decrypt*","*negotiat*","*data leak*","*stolen*","*ransom*","*your company*"))
+      | table _time SenderAddress RecipientAddress Subject Status
+    tested: null
+    attack:
+      - "T1657"
+  - id: "ransomware-response/elastic/s1-successful-authentication-from-public-addresses"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "Elastic / Wazuh"
+    title: "Successful authentication from public addresses, by user and country"
+    why: "Most ransomware cases start with a VPN or RDP logon on a valid account, or an unpatched edge device. The first external logon on the account later seen moving laterally dates the intrusion. Firewall and VPN integrations map to the same ECS authentication category, so one query covers RDP (4624 type 10) and the VPN."
+    how: null
+    fp: "Travelling staff give two countries; three, or a hosting-provider ASN, is the lead. A published RDP gateway or NAT'd VPN concentrator shows every user from one public address; exclude it by host.name."
+    query: |-
+      FROM logs-*
+      | WHERE event.category == "authentication" AND event.outcome == "success" AND source.ip IS NOT NULL
+      | WHERE NOT CIDR_MATCH(source.ip, "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")
+      | STATS first = MIN(@timestamp), logons = COUNT(*), countries = COUNT_DISTINCT(source.geo.country_iso_code), hosts = COUNT_DISTINCT(host.name) BY user.name, source.ip, event.dataset
+      | SORT first ASC
+      // Wazuh: data.win.system.eventID:4624 AND data.win.eventdata.logonType:10 AND NOT data.win.eventdata.ipAddress:(10.* OR 192.168.* OR 172.1[6-9].* OR 172.2*.* OR 172.3[01].*)
+    tested: null
+    attack:
+      - "T1133"
+      - "T1078"
+  - id: "ransomware-response/elastic/s2-remote-access-and-tunnelling-tools-first-seen-pe"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "Remote-access and tunnelling tools, first seen per tool"
+    why: "Operators install legitimate RMM tools for persistent access and tunnel through them when the EDR blocks their C2. A tool first seen in the last days, on few hosts, is the lead."
+    how: null
+    fp: "Helpdesk RMM is legitimate on every host; the lead is a second RMM product, or the house product on servers where helpdesk never connects. Filter on process.code_signature.subject_name and the install path your deployment uses."
+    query: |-
+      FROM logs-*
+      | WHERE event.category == "process" AND event.type == "start"
+      | WHERE process.name RLIKE "(?i)(anydesk|screenconnect|atera|splashtop|teamviewer|rustdesk|meshagent|client32|simplehelp|syncro|tacticalrmm|ngrok|chisel|plink|ligolo|cloudflared|gost|frpc).*"
+            OR process.command_line RLIKE ".*(--reverse|-R 0\\.0\\.0\\.0|tunnel run|client -connect).*"
+      | STATS first = MIN(@timestamp), hosts = COUNT_DISTINCT(host.name), example = VALUES(process.command_line) BY process.name
+      | SORT first ASC
+    tested: null
+    attack:
+      - "T1219"
+      - "T1572"
+  - id: "ransomware-response/elastic/s2-beacon-indicators-named-pipes-sysmon-17-18-hollo"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "Elastic / Wazuh"
+    title: "Beacon indicators — named pipes (Sysmon 17/18), hollow rundll32, remote threads"
+    why: "Cobalt Strike, Brute Ratel and Sliver leave default pipe names and a hollow rundll32.exe parent; Sysmon 8 records the loader creating a thread in another process. These date the foothold when the RMM hunt is empty."
+    how: null
+    fp: "AV, DLP and performance agents create remote threads from Program Files and are excluded; anything from Users, ProgramData or Temp is the lead. Pipe names are the defaults; a changed malleable profile will not hit this."
+    query: |-
+      any where
+        (event.code in ("17", "18") and winlog.event_data.PipeName : ("\\msagent_*", "\\postex_*", "\\MSSE-*-server", "\\status_*", "\\mojo.5688.8052.*", "\\DserNamePipe*", "\\SearchTextHarvester*", "\\mypipe-f*", "\\mypipe-h*")) or
+        (event.category == "process" and event.type == "start" and process.name : "rundll32.exe" and process.args_count <= 1) or
+        (event.code == "8" and not winlog.event_data.SourceImage : ("C:\\Program Files*", "C:\\Windows\\System32\\*"))
+    tested: null
+    attack:
+      - "T1055"
+      - "T1218.011"
+      - "T1071.001"
+  - id: "ransomware-response/elastic/s3-ad-and-network-reconnaissance-tools-connection-f"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Discovery"
+    stage_ord: 3
+    platform: "Elastic / Wazuh"
+    title: "AD and network reconnaissance tools; connection fan-out"
+    why: "AdFind, SharpHound and network scanners run days before encryption; they date the dwell time. Elastic Defend network events show a scanner as one process reaching hundreds of destinations in minutes."
+    how: null
+    fp: "Vulnerability scanners, monitoring pollers, browsers and SCCM exceed the fan-out threshold; exclude those hosts and processes. Admin jump hosts run nltest daily; a user workstation running it, or any host running SharpHound, is the finding."
+    query: |-
+      process where event.type == "start" and
+        (process.name : ("adfind.exe", "sharphound.exe", "netscan.exe", "advanced_ip_scanner*", "nltest.exe", "dsquery.exe") or
+         process.command_line : ("*trustdmp*", "*domain_trusts*", "*-collectionmethod*", "*objectcategory=computer*", "*samaccounttype=805306368*", "*Get-DomainComputer*", "*Get-NetSession*"))
+      // one process, many destinations (ES|QL)
+      FROM logs-endpoint.events.network-*
+      | WHERE event.action == "connection_attempted"
+      | STATS dests = COUNT_DISTINCT(destination.ip), ports = COUNT_DISTINCT(destination.port) BY host.name, process.name, bucket = DATE_TRUNC(10 minutes, @timestamp)
+      | WHERE dests > 50 OR ports > 20
+      | SORT dests DESC
+    tested: null
+    attack:
+      - "T1087.002"
+      - "T1482"
+      - "T1046"
+      - "T1018"
+  - id: "ransomware-response/elastic/s4-lsass-handle-access-known-tools-and-ntds-dit-the"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "Elastic / Wazuh"
+    title: "LSASS handle access, known tools and NTDS.dit theft"
+    why: "A LSASS dump means every credential cached on that host is the attacker's; an NTDS copy is every hash in the domain. Sysmon 10 sees the handle, which catches nanodump and renamed tools that command lines miss; Elastic Defend's own credential-access rules cover the same ground when Sysmon is absent."
+    how: null
+    fp: "AV engines, EDR agents and crash-dump tooling open LSASS from Program Files or System32 and are excluded; anything else opening LSASS from a user-writable path is a finding. Backup agents create shadow copies on schedule; match account and time to the job."
+    query: |-
+      any where
+        (event.code == "10" and winlog.event_data.TargetImage : "*\\lsass.exe" and
+         winlog.event_data.GrantedAccess in ("0x1010", "0x1410", "0x1438", "0x143a", "0x1fffff") and
+         not winlog.event_data.SourceImage : ("C:\\Program Files*", "C:\\Windows\\System32\\*")) or
+        (event.category == "process" and event.type == "start" and
+         (process.command_line : ("*comsvcs*MiniDump*", "*sekurlsa*", "*nanodump*", "*lsassy*", "*pypykatz*", "*dumpert*", "*mimikatz*", "*ntds.dit*", "*reg* save*hklm\\system*") or
+          (process.name : "procdump*" and process.command_line : "*lsass*") or
+          (process.name : "ntdsutil.exe" and process.command_line : ("*ifm*", "*create full*")) or
+          (process.name : "vssadmin.exe" and process.command_line : "*create*shadow*"))) or
+        (event.category == "file" and file.name : "ntds.dit" and not file.path : "C:\\Windows\\NTDS\\*")
+    tested: null
+    attack:
+      - "T1003.001"
+      - "T1003.003"
+  - id: "ransomware-response/elastic/s4-dcsync-and-kerberoasting"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "Elastic / Wazuh"
+    title: "DCSync and Kerberoasting"
+    why: "DCSync pulls hashes over the replication protocol with no process on the DC; Kerberoasting cracks service-account passwords offline. Both are visible only in the DC Security log — 4662 with the replication GUIDs, 4769 with RC4 tickets."
+    how: null
+    fp: "Entra Connect ( MSOL_ or the AD DS connector account) and some backup or identity products replicate legitimately; name them. Legacy applications still request RC4 tickets, but one user requesting five or more distinct SPNs in an hour is Rubeus, not an application."
+    query: |-
+      FROM logs-*
+      | WHERE event.code == "4662" AND winlog.event_data.ObjectServer == "DS"
+      | WHERE winlog.event_data.Properties LIKE "*1131f6aa-9c07-11d1-f79f-00c04fc2dcd2*" OR winlog.event_data.Properties LIKE "*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2*" OR winlog.event_data.Properties LIKE "*89e95b76-444d-4c62-991a-0facbeda640c*"
+      | WHERE NOT winlog.event_data.SubjectUserName LIKE "*$" AND NOT winlog.event_data.SubjectUserName LIKE "MSOL_*"
+      | KEEP @timestamp, host.name, winlog.event_data.SubjectUserName, winlog.event_data.SubjectDomainName
+      FROM logs-*
+      | WHERE event.code == "4769" AND winlog.event_data.TicketEncryptionType == "0x17" AND winlog.event_data.Status == "0x0"
+      | WHERE NOT winlog.event_data.ServiceName LIKE "*$" AND winlog.event_data.ServiceName != "krbtgt"
+      | STATS services = COUNT_DISTINCT(winlog.event_data.ServiceName), names = VALUES(winlog.event_data.ServiceName) BY winlog.event_data.TargetUserName, winlog.event_data.IpAddress, bucket = DATE_TRUNC(1 hour, @timestamp)
+      | WHERE services > 5
+      | SORT services DESC
+    tested: null
+    attack:
+      - "T1003.006"
+      - "T1558.003"
+  - id: "ransomware-response/elastic/s5-one-account-or-source-reaching-many-hosts-admin"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "Elastic / Wazuh"
+    title: "One account or source reaching many hosts; admin-share writes"
+    why: "Fan-out from one source is how the payload is staged; the source host and account are what to contain first. 5145 on ADMIN$ or C$ with write access shows the copy itself (needs File Share object-access auditing on the targets)."
+    how: null
+    fp: "DCs, vulnerability scanners, backup servers, SCCM and monitoring pollers reach dozens of hosts and write to admin shares on schedule; exclude their addresses and service accounts first."
+    query: |-
+      FROM logs-*
+      | WHERE event.code == "4624" AND winlog.event_data.LogonType IN ("3", "10")
+      | STATS targets = COUNT_DISTINCT(host.name), first = MIN(@timestamp), last = MAX(@timestamp) BY user.name, source.ip
+      | WHERE targets > 10
+      | SORT targets DESC
+      FROM logs-*
+      | WHERE event.code == "5145" AND winlog.event_data.ShareName IN ("\\\\*\\ADMIN$", "\\\\*\\C$") AND winlog.event_data.AccessMask IN ("0x2", "0x6", "0x12019f")
+      | STATS targets = COUNT_DISTINCT(host.name), files = VALUES(winlog.event_data.RelativeTargetName) BY user.name, source.ip
+      | WHERE targets > 3
+    tested: null
+    attack:
+      - "T1021.001"
+      - "T1021.002"
+  - id: "ransomware-response/elastic/s5-remote-execution-service-installs-7045-remote-ta"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "Elastic / Wazuh"
+    title: "Remote execution — service installs (7045), remote tasks (4698), WMI, WinRM and Impacket"
+    why: "PsExec is the minority. Most tooling installs a service with a random name, registers a task, or runs through WMI or WinRM; Impacket's wmiexec / smbexec leave a fixed cmd.exe /Q /c … \\\\127.0.0.1\\ADMIN$ shape. Each hit is a target host for the isolation list."
+    how: null
+    fp: "SCCM, Intune, GPO software installs and monitoring agents install the same service on every host; the random eight-letter or hex name is the PsExec-clone signature. wmiprvse.exe spawning powershell.exe is also how SCCM and some RMMs run scripts; match the script path."
+    query: |-
+      any where
+        (event.code == "7045" and (winlog.event_data.ServiceName regex~ "[a-z]{8}|[0-9a-f]{8,}|PSEXESVC|csexec.*|PAExec.*|RemComSvc" or winlog.event_data.ImagePath : ("*COMSPEC*", "*cmd.exe*", "*powershell*", "*ADMIN$*"))) or
+        (event.code == "4698") or
+        (event.category == "process" and event.type == "start" and
+         ((process.parent.name : ("wmiprvse.exe", "wsmprovhost.exe") and process.name : ("cmd.exe", "powershell.exe", "pwsh.exe", "rundll32.exe", "mshta.exe")) or
+          (process.name : "cmd.exe" and process.command_line : "*/Q /c*" and process.command_line : ("*ADMIN$*", "*\\127.0.0.1\\*", "*2>&1*"))))
+      // Wazuh: data.win.system.eventID:7045 AND NOT data.win.eventdata.imagePath:"C:\\Program Files*"
+    tested: null
+    attack:
+      - "T1569.002"
+      - "T1053.005"
+      - "T1047"
+      - "T1021.006"
+  - id: "ransomware-response/elastic/s6-esxi-and-vcenter-audit-events-backup-console-log"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Recovery planes"
+    stage_ord: 6
+    platform: "Elastic / Wazuh"
+    title: "ESXi and vCenter audit events; backup console logons, deletions and retention changes"
+    why: "Enabling SSH or the ESXi Shell, leaving lockdown mode and root logins on a host normally managed only through vCenter is the attacker lining up the hypervisor encryptor; backup deletion follows (94% of victims saw their backups attacked — Sophos, State of Ransomware 2024). ESXi writes VOB audit records to syslog; Veeam writes an event id for every restore point deleted, job changed, repository removed and MFA toggled. If the ESXi search is empty, confirm syslog forwarding before concluding nothing happened."
+    how: "ESXi arrives through the Filebeat/Elastic Agent syslog input as message with log.syslog.appname. Veeam ids are from the Veeam Backup & Replication Event Reference: 10050 restore point deleted, 23050 job settings updated, 23090 job deleted, 28200 repository deleted, 30200 scale-out repository deleted, 31400 user/group deleted, 40201 MFA disabled, 40204 MFA for user disabled, 42401 four-eyes authorisation disabled, 41800 attempt to delete backup failed; collect the Veeam Backup channel with the Windows integration (custom channel)."
+    fp: "Patch windows and vendor support sessions enable SSH legitimately; match each enable event to a change record. Retention runs delete restore points on every job cycle; the finding is a deletion outside the schedule or by an interactive user rather than the Veeam service account."
+    query: |-
+      FROM logs-*
+      | WHERE message LIKE "*esx.audit.ssh.enabled*" OR message LIKE "*esx.audit.shell.enabled*" OR message LIKE "*esx.audit.lockdownmode.disabled*"
+             OR message LIKE "*esx.audit.account.loginfailures*" OR message LIKE "*esx.audit.account.locked*" OR message LIKE "*esx.audit.dcui.enabled*" OR message LIKE "*User root@*"
+      | KEEP @timestamp, host.name, log.syslog.appname, message
+      | SORT @timestamp ASC
+      FROM logs-*
+      | WHERE winlog.channel == "Veeam Backup" AND event.code IN ("10050", "23050", "23090", "28200", "30200", "31400", "40201", "40204", "42401", "41800")
+      | KEEP @timestamp, host.name, event.code, message
+      FROM logs-*
+      | WHERE event.code == "4624" AND winlog.event_data.LogonType IN ("2", "10") AND (host.name IN ("vbr01", "vbr-proxy01") OR user.name IN ("svc-veeam", "backup-admin"))
+      | STATS logons = COUNT(*), first = MIN(@timestamp) BY host.name, user.name, source.ip, winlog.event_data.LogonType
+      | SORT first ASC
+      FROM logs-*
+      | WHERE event.code IN ("4728", "4732", "4756") AND winlog.event_data.TargetUserName == "ESX Admins"
+      | KEEP @timestamp, host.name, winlog.event_data.SubjectUserName, winlog.event_data.MemberName
+    tested: null
+    attack:
+      - "T1021.004"
+      - "T1685"
+      - "T1078"
+      - "T1490"
+  - id: "ransomware-response/elastic/s7-transfer-tools-destinations-archive-staging-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Exfiltration"
+    stage_ord: 7
+    platform: "Elastic / Wazuh"
+    title: "Transfer tools, destinations, archive staging and bytes out per host"
+    why: "rclone to MEGA is still the most common path, but Dropbox, pCloud, Backblaze B2, Gofile and temp.sh are the alternates, and the data is usually archived with 7-Zip or WinRAR first. Bytes out per internal host over the dwell window, from the firewall or Zeek conn log, is the number the breach notification needs."
+    how: null
+    fp: "Mail servers, proxies, backup-to-cloud agents and video-conferencing hosts top the bytes-out list every day; compare against the previous 14 days per host rather than ranking once. The attacker's archives are on file servers, by an admin account, at night, split into volumes."
+    query: |-
+      any where
+        (event.category == "process" and (process.name : ("rclone.exe", "megasync.exe", "megacmd.exe", "winscp.exe", "filezilla.exe", "restic.exe") or process.command_line : ("*rclone*", "*mega-put*", "*--transfers*", "*b2 upload*") or
+          (process.name : ("7z.exe", "7za.exe", "rar.exe", "winrar.exe") and process.command_line : "* a *" and process.command_line : ("* -p*", "* -hp*", "*-mhe*", "* -v*")))) or
+        (event.category == "network" and dns.question.name : ("*mega.nz", "*mega.io", "*mega.co.nz", "*dropbox.com", "*dropboxapi.com", "*pcloud.com", "*backblazeb2.com", "*backblaze.com", "*gofile.io", "*temp.sh", "*file.io", "*ufile.io", "*filetransfer.io", "*transfer.sh", "*put.io", "*storj.io", "*wasabisys.com"))
+      // bytes out per internal source over the dwell window (firewall or Zeek conn, ECS source.bytes)
+      FROM logs-*
+      | WHERE event.category == "network" AND source.bytes IS NOT NULL AND CIDR_MATCH(source.ip, "10.0.0.0/8") AND NOT CIDR_MATCH(destination.ip, "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+      | STATS bytes_out = SUM(source.bytes), dests = COUNT_DISTINCT(destination.ip) BY source.ip
+      | EVAL gb_out = ROUND(bytes_out / 1073741824.0, 1)
+      | SORT bytes_out DESC
+      | LIMIT 20
+    tested: null
+    attack:
+      - "T1567.002"
+      - "T1560.001"
+      - "T1048"
+  - id: "ransomware-response/elastic/s8-shadow-copy-boot-recovery-and-backup-catalog-del"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Impact preparation"
+    stage_ord: 8
+    platform: "Elastic / Wazuh"
+    title: "Shadow-copy, boot-recovery and backup-catalog deletion; security services stopped; GPO changes"
+    why: "These run minutes before encryption. A hit with no encryption yet means contain now. GPO changes (5136/5137 on DCs, needs Directory Service Changes auditing) are the deployment channel from the T+45–60 step."
+    how: null
+    fp: "Patch cycles and DBAs stop SQL and backup services; GPO edits happen daily in a large estate. The finding is a stop across many hosts from one account, or a GPO edit by an account that does not administer GPOs."
+    query: |-
+      any where
+        (event.category == "process" and event.type == "start" and
+         ((process.name : "vssadmin.exe" and process.command_line : ("*delete*shadows*", "*resize*shadowstorage*")) or
+          (process.name : "wmic.exe" and process.command_line : "*shadowcopy*delete*") or
+          (process.name : "bcdedit.exe" and process.command_line : ("*recoveryenabled*", "*bootstatuspolicy*")) or
+          (process.name : "wbadmin.exe" and process.command_line : "*delete*catalog*") or
+          process.command_line : ("*Set-MpPreference*Disable*", "*DisableRealtimeMonitoring*") or
+          (process.name : ("net.exe", "net1.exe", "sc.exe") and process.command_line : ("*stop*", "*config*", "*delete*") and process.command_line : ("*WinDefend*", "*Sense*", "*CSFalconService*", "*SentinelAgent*", "*veeam*", "*sql*", "*vss*", "*backup*")) or
+          (process.name : "taskkill.exe" and process.command_line : ("*sql*", "*veeam*", "*backup*")))) or
+        (event.code in ("5136", "5137") and winlog.event_data.ObjectClass == "groupPolicyContainer")
+      // Wazuh: data.win.eventdata.commandLine:*shadows* and data.win.system.eventID:1
+    tested: null
+    attack:
+      - "T1490"
+      - "T1685"
+      - "T1484.001"
+      - "T1489"
+  - id: "ransomware-response/elastic/s9-mass-file-changes-by-one-process-ransom-notes"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Encryption"
+    stage_ord: 9
+    platform: "Elastic / Wazuh"
+    title: "Mass file changes by one process; ransom notes"
+    why: "The process doing the writing is patient zero's payload; the note name identifies the variant."
+    how: null
+    fp: "Backup agents, DCs (SYSVOL), build servers, compilers, Outlook and OneDrive sync exceed 500 file writes in five minutes on their own; exclude by process.hash.sha256 of your known software, not by host."
+    query: |-
+      FROM logs-endpoint.events.file-*
+      | WHERE event.action IN ("rename", "modification")
+      | STATS files = COUNT(*) BY host.name, process.name, process.hash.sha256, bucket = DATE_TRUNC(5 minutes, @timestamp)
+      | WHERE files > 500
+      | SORT files DESC
+      FROM logs-endpoint.events.file-*
+      | WHERE event.action == "creation" AND file.name RLIKE "(?i)(readme|restore|recover|decrypt|how_to|how-to|!!!|_readme|unlock).*\\.(txt|html?|hta)"
+      | STATS hosts = COUNT_DISTINCT(host.name), notes = COUNT(*), writer = VALUES(process.name) BY file.name
+    tested: null
+    attack:
+      - "T1486"
+  - id: "ransomware-response/elastic/s10-ransom-contact-by-mail"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 10 · Extortion"
+    stage_ord: 10
+    platform: "Elastic / Wazuh"
+    title: "Ransom contact by mail"
+    why: "The first contact usually arrives by email to executives or the generic mailbox, from a privacy mail provider, within hours of encryption. Finding every message tells counsel who has been contacted. Leak-site listings are not in any log; threat intel or the IR firm monitors the group's site."
+    how: "Needs a mail-gateway integration that maps to the ECS email.* fieldset (Mimecast, Proofpoint TAP and the Microsoft Defender XDR integration do); the Microsoft 365 audit integration alone does not carry inbound subjects."
+    fp: "Legitimate mail from Proton or Tuta users exists; the subject filter is what separates the contact from ordinary mail. Expect phishing that imitates the extortionist once the incident is public."
+    query: |-
+      FROM logs-*
+      | WHERE email.from.address IS NOT NULL
+      | WHERE email.from.address RLIKE ".*@(onionmail\\.org|proton\\.me|protonmail\\.com|tutanota\\.com|tuta\\.io|cock\\.li|mail2tor\\.com|skiff\\.com)"
+             OR email.subject RLIKE "(?i).*(your network|your files|encrypted|decrypt|negotiat|data leak|stolen|ransom|your company).*"
+      | KEEP @timestamp, email.from.address, email.to.address, email.subject, event.action
+    tested: null
+    attack:
+      - "T1657"
+  - id: "ransomware-response/linux/s1-ssh-and-web-ui-logins-by-source-first-seen-per-a"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 1 · Initial access"
+    stage_ord: 1
+    platform: "Linux / ESXi"
+    title: "SSH and web-UI logins by source, first seen per account"
+    why: "On a hypervisor or NAS the entry is almost always a credential — a root or admin login from a workstation that never managed it before, or from a VPN pool address. ESXi records SSH in auth.log and web/API sessions in hostd.log; vCenter records SSO logins in its audit log."
+    how: null
+    fp: "Backup proxies, monitoring and the virtualisation team's jump host log in to ESXi constantly; list those addresses once and exclude them. Any other workstation address, or a VPN pool address, on root or administrator@vsphere.local is the lead."
+    query: |-
+      # ESXi
+      grep -hE "Accepted (password|publickey)|session opened" /var/run/log/auth.log* | awk '{print $1, $0}' | sort | head -50
+      grep -hE "User [^ ]+@[0-9.]+ logged in|Rejected password" /var/run/log/hostd.log* | sort | uniq -c | sort -rn | head -30
+      # vCenter (VCSA)
+      grep -hE "UserLoginSessionEvent|logged in" /var/log/vmware/vpxd/vpxd.log* | head -50
+      ls -la /var/log/audit/sso-events/ && grep -hiE "login|authentication" /var/log/audit/sso-events/audit_events.log | tail -50
+      # Linux / NAS
+      journalctl _COMM=sshd --since "-30d" | grep -E "Accepted|Failed password" | awk '{print $NF, $(NF-3), $(NF-5)}' | sort | uniq -c | sort -rn
+      last -F -i | head -50
+      Velociraptor: Linux.Syslog.SSHLogin ; Linux.Sys.LastUserLogin
+    tested: null
+    attack:
+      - "T1133"
+      - "T1078"
+      - "T1021.004"
+  - id: "ransomware-response/linux/s2-persistence-and-new-binaries-on-the-host"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 2 · Foothold"
+    stage_ord: 2
+    platform: "Linux / ESXi"
+    title: "Persistence and new binaries on the host"
+    why: "On Linux the foothold is a cron entry, a systemd unit, an SSH key or a reverse shell; on ESXi it is /etc/rc.local.d/local.sh, an unsigned VIB or a binary dropped in /tmp or a datastore. The snapshot script records every persistence location with hashes and package verification so you can diff against a clean host."
+    how: null
+    fp: "Admin-made cron jobs and partner VIBs (hardware vendors) show as not-from-package too, which is what --compare-to is for. A VIB with acceptance level CommunitySupported on a production host is a finding until the virtualisation team names it."
+    query: |-
+      # Linux / NAS: full persistence snapshot (read-only), then diff against a clean host of the same build
+      sudo ./get-persistence-snapshot.sh --zip -o /tmp/ir-persistence
+      sudo ./get-persistence-snapshot.sh --compare-to /path/to/clean/persistence.tsv -o /tmp/ir-diff
+      # ESXi: busybox has no bash; check the same locations by hand
+      cat /etc/rc.local.d/local.sh
+      esxcli software vib list | grep -viE "VMware|Dell|HPE|Lenovo|Cisco|Broadcom"
+      esxcli software acceptance get
+      find /tmp /var/tmp /scratch /vmfs/volumes -type f \( -perm -u+x -o -name "*.sh" -o -name "*.py" \) -mtime -14 ! -path "*/.sdd.sf/*" 2>/dev/null
+      cat /etc/ssh/keys-root/authorized_keys
+      Velociraptor: Linux.Sys.Crontab ; Linux.Sys.Services ; Linux.Ssh.AuthorizedKeys ; Linux.Sys.SUID ; Linux.Search.FileFinder (SearchFilesGlob=/tmp/**, MoreRecentThan=<window>)
+    tested: null
+    attack:
+      - "T1053.003"
+      - "T1098.004"
+      - "T1543.002"
+      - "T1505"
+  - id: "ransomware-response/linux/s3-enumeration-commands-in-shell-history-and-shell"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 3 · Discovery"
+    stage_ord: 3
+    platform: "Linux / ESXi"
+    title: "Enumeration commands in shell history and shell.log"
+    why: "Before encrypting, the operator lists VMs, datastores and the backup repository ( esxcli vm process list, vim-cmd vmsvc/getallvms, df -h /vmfs/volumes ) and on Linux maps the network. ESXi's shell.log keeps every interactive command with its world id; bash history survives unless the operator cleared it."
+    how: null
+    fp: "The virtualisation team runs getallvms during maintenance; the finding is the same commands from a session that appears in the stage 1 hunt as an unexpected source."
+    query: |-
+      # ESXi
+      grep -hE "vmsvc/getallvms|vm process list|esxcli storage|df |ls /vmfs|hostsvc/|esxcli system account|esxcli network" /var/run/log/shell.log* | head -50
+      grep -h "" /.ash_history 2>/dev/null
+      # Linux / NAS
+      for h in /root /home/*; do echo "== $h"; cat $h/.bash_history 2>/dev/null | grep -nE "nmap|masscan|arp -a|ip neigh|smbclient|rpcclient|ldapsearch|showmount|crontab|find / -perm" ; done
+      Velociraptor: Linux.Sys.BashHistory (SearchRegex=(?i)nmap|masscan|ldapsearch|smbclient|showmount)
+    tested: null
+    attack:
+      - "T1082"
+      - "T1083"
+      - "T1018"
+  - id: "ransomware-response/linux/s4-new-or-changed-root-equivalent-accounts-sudo-and"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 4 · Privilege"
+    stage_ord: 4
+    platform: "Linux / ESXi"
+    title: "New or changed root-equivalent accounts; sudo and credential files"
+    why: "On ESXi the goal is root or an Admin -role local account; via AD it is the ESX Admins group (CVE-2024-37085). On Linux it is a new UID-0 user, a sudoers entry or a readable /etc/shadow. Finding the account used tells you which credential rotation ends their access."
+    how: null
+    fp: "Configuration management (Ansible, Puppet) touches sudoers on every run; match the mtime to the last run. A second UID-0 account has no legitimate reason on either platform."
+    query: |-
+      # ESXi
+      esxcli system account list
+      esxcli system permission list
+      grep -hE "esx.audit.account|AddUser|SetPassword|UpdateUser" /var/run/log/hostd.log* /var/run/log/vobd.log* | head -30
+      esxcli system settings advanced list -o /Config/HostAgent/plugins/hostsvc/esxAdminsGroup
+      # Linux / NAS
+      awk -F: '$3==0 {print}' /etc/passwd
+      awk -F: '$2=="" {print $1" has no password"}' /etc/shadow
+      find /etc/sudoers /etc/sudoers.d -newermt "-14 days" -type f -exec ls -la {} \;
+      journalctl _COMM=sudo --since "-14d" | grep -vE "pam_unix|session (opened|closed)" | tail -50
+      Velociraptor: Linux.Sys.Users ; Linux.Sys.SUID
+    tested: null
+    attack:
+      - "T1078.003"
+      - "T1136.001"
+      - "T1003.008"
+  - id: "ransomware-response/linux/s5-logins-to-this-host-from-other-internal-hosts-ou"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 5 · Lateral movement"
+    stage_ord: 5
+    platform: "Linux / ESXi"
+    title: "Logins to this host from other internal hosts; outbound SSH from it"
+    why: "The ESXi encryptor is copied in over SSH or SCP from a Windows host the attacker already holds; the NAS is reached the same way or over SMB with a stolen admin credential. The source address of that session is the next host for the isolation list, and outbound SSH from the hypervisor itself means it was used as a pivot."
+    how: null
+    fp: "Backup proxies and the virtualisation jump host open SSH to ESXi on schedule; exclude those addresses. A workstation or server address that appears for the first time inside the dwell window is the pivot."
+    query: |-
+      # ESXi: sessions by source address and world id
+      grep -hE "Accepted|session opened" /var/run/log/auth.log* | grep -oE "from [0-9.]+" | sort | uniq -c | sort -rn
+      grep -hE "scp|sftp-server|wget|curl" /var/run/log/shell.log* | head -30
+      esxcli network ip connection list | grep -E ":22 |:443 " | grep -v "0.0.0.0"
+      # Linux / NAS
+      journalctl _COMM=sshd --since "-14d" | grep Accepted | grep -oE "from [0-9.]+" | sort | uniq -c | sort -rn
+      ss -tnp state established '( dport = :22 or dport = :445 )'
+      grep -hE "ssh |scp |sftp " /root/.bash_history /home/*/.bash_history 2>/dev/null
+      Velociraptor: Linux.Network.NetstatEnriched ; Linux.Ssh.KnownHosts (hosts this box has connected to)
+    tested: null
+    attack:
+      - "T1021.004"
+      - "T1570"
+  - id: "ransomware-response/linux/s6-ssh-and-shell-enablement-lockdown-changes-snapsh"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 6 · Recovery planes"
+    stage_ord: 6
+    platform: "Linux / ESXi"
+    title: "SSH and shell enablement, lockdown changes, snapshot deletion and the backup appliance"
+    why: "This is the stage that decides the incident, and these hosts are its only native evidence. vobd.log records every SSH, shell and lockdown change as an audit VOB; hostd.log and vCenter tasks record snapshot removal and VM reconfiguration; a Linux-based backup appliance records console logins in its own audit log and auth.log."
+    how: null
+    fp: "Patch windows enable SSH legitimately and retention runs delete snapshots on schedule; match each event to a change record or job. SSH enabled outside a change, lockdown disabled, or RemoveAllSnapshots across many VMs in minutes is the attacker."
+    query: |-
+      # ESXi: audit VOBs (the authoritative record of SSH/shell/lockdown changes)
+      grep -hE "esx.audit.(ssh|shell|dcui).(enabled|disabled)|esx.audit.lockdownmode|esx.audit.account" /var/run/log/vobd.log*
+      grep -hE "enable_ssh|enable_esx_shell|lockdown_mode_exit|TSM-SSH|TSM\b" /var/run/log/shell.log* /var/run/log/hostd.log* | head -30
+      vim-cmd vimsvc/auth/lockdown_is_enabled
+      esxcli system settings advanced list -o /UserVars/ESXiShellTimeOut
+      # snapshots and VM state changes
+      grep -hE "RemoveSnapshot|RemoveAllSnapshots|snapshot.remove|VmPoweredOffEvent|vmsvc/power.off|ReconfigVM" /var/run/log/hostd.log* /var/log/vmware/vpxd/vpxd.log* 2>/dev/null | head -50
+      for v in $(vim-cmd vmsvc/getallvms | awk 'NR>1{print $1}'); do echo "== VM $v"; vim-cmd vmsvc/snapshot.get $v | head -5; done
+      # Veeam hardened repository / Linux backup appliance
+      grep -hE "Accepted|sudo:" /var/log/auth.log* /var/log/secure* | tail -50
+      ls -la --time-style=full-iso /backups 2>/dev/null | head; find /backups -type f -mmin -1440 -name "*.vbk" -o -mmin -1440 -name "*.vib" 2>/dev/null | head
+      Velociraptor (Linux appliance): Linux.Sys.LogGrep (TargetGlob=/var/log/auth.log*, GrepRegex=Accepted|sudo)
+    tested: null
+    attack:
+      - "T1021.004"
+      - "T1685"
+      - "T1490"
+  - id: "ransomware-response/linux/s7-transfer-tools-and-bulk-reads-from-datastores-an"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 7 · Exfiltration"
+    stage_ord: 7
+    platform: "Linux / ESXi"
+    title: "Transfer tools and bulk reads from datastores and NAS shares"
+    why: "Data usually leaves from a Windows host, but NAS shares and VM disks are sometimes pulled straight from the appliance with rclone, rsync or scp. An rclone config on a NAS or Linux host names the destination account; a large outbound transfer in the interface counters dates it."
+    how: null
+    fp: "Backup-to-cloud jobs run rclone or rsync on schedule from the NAS; match the process to the job and its destination. A rclone config written inside the dwell window, or an interface counter far above the daily baseline, is the finding; the firewall has the exact bytes."
+    query: |-
+      # Linux / NAS
+      find / -name rclone.conf -o -name ".megarc" -o -name "mega-cmd*" 2>/dev/null | grep -v "^/proc"
+      ps -eo pid,user,lstart,cmd | grep -E "rclone|rsync|scp|sftp|curl -T|mega-put|restic" | grep -v grep
+      grep -hE "rclone|rsync .*@|scp .*@|curl -T|mega-put" /root/.bash_history /home/*/.bash_history 2>/dev/null
+      cat /proc/net/dev | awk 'NR>2 {printf "%-10s rx %.1f GB tx %.1f GB\n", $1, $2/1073741824, $10/1073741824}'
+      # ESXi
+      grep -hE "scp|sftp|wget|curl|nc " /var/run/log/shell.log* | head -30
+      esxcli network ip connection list | grep -vE ":(22|443|902|8000|8182) " | grep -E "ESTABLISHED"
+      Velociraptor: Linux.Search.FileFinder (SearchFilesGlob=/**/rclone.conf, Upload_File=Y) ; Linux.Sys.Pslist
+    tested: null
+    attack:
+      - "T1567.002"
+      - "T1048"
+      - "T1039"
+  - id: "ransomware-response/linux/s8-acceptance-level-lowered-execinstalledonly-off-s"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 8 · Impact preparation"
+    stage_ord: 8
+    platform: "Linux / ESXi"
+    title: "Acceptance level lowered, execInstalledOnly off, syslog cut, VMs killed"
+    why: "An ESXi encryptor cannot run unless the host accepts unsigned code, so the operator lowers the acceptance level and turns off execInstalledOnly first, then kills the VMs so the disks are not locked. A syslog change hides what follows. Each of these is minutes before encryption."
+    how: null
+    fp: "Hardware vendors ship PartnerSupported VIBs and some admins set CommunitySupported once and leave it; the change inside the dwell window is what matters, which is why shell.log is grepped for the set command rather than trusting the current value alone."
+    query: |-
+      esxcli software acceptance get
+      esxcli system settings kernel list -o execInstalledOnly
+      esxcli system syslog config get
+      grep -hE "acceptance set|execInstalledOnly|syslog config set|vm process kill|power.off|kill -9" /var/run/log/shell.log* /var/run/log/hostd.log* | head -30
+      esxcli vm process list | grep -c "World ID" ; vim-cmd vmsvc/getallvms | wc -l
+      # Linux / NAS: snapshot and backup tooling disabled
+      systemctl list-units --type=service --state=inactive,failed | grep -iE "backup|snap|veeam|restic|borg|rsnapshot"
+      journalctl --since "-3d" | grep -iE "stopped .*(backup|snapshot)|Removed snapshot|synosnapshot|btrfs subvolume delete|zfs destroy" | tail -30
+    tested: null
+    attack:
+      - "T1685"
+      - "T1489"
+      - "T1490"
+  - id: "ransomware-response/linux/s9-encrypted-vmdks-and-shares-ransom-notes-the-encr"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 9 · Encryption"
+    stage_ord: 9
+    platform: "Linux / ESXi"
+    title: "Encrypted VMDKs and shares, ransom notes, the encryptor process"
+    why: "The encryptor writes a note into every VM folder and renames or overwrites.vmdk,.vmx and.vmsn files; it is still running when you find it, from /tmp or a datastore. The binary and the note identify the variant and give the extortion channel."
+    how: null
+    fp: "VM folders contain vendor readme files on some appliances; the ransom note is the same file in every VM folder at the same minute. An unknown process from /tmp with high CPU on an ESXi host has no legitimate explanation."
+    query: |-
+      # ESXi
+      find /vmfs/volumes -maxdepth 3 -type f \( -iname "*readme*" -o -iname "*how_to*" -o -iname "*recover*" -o -iname "*decrypt*" -o -iname "*.txt" \) -mmin -1440 2>/dev/null | head
+      find /vmfs/volumes -maxdepth 3 -type f -newer /var/run/log/vobd.log ! -name "*.vmdk" ! -name "*.log" 2>/dev/null | head -50
+      ls /vmfs/volumes/*/*/ | grep -vE "\.(vmdk|vmx|vmxf|vmsd|nvram|log|vswp|vmsn|vmem)$" | sort | uniq -c | sort -rn | head
+      ps -c | grep -vE "vmx|hostd|vpxa|rhttpproxy|sshd|busybox|sfcb|vobd|dcui|nfsgssd|net-|vsan|clomd|epd|iofilter|lwsmd|vmware-|vmkeventd|vmsyslogd|ntpd|smartd|slpd|vmtoolsd" | head
+      esxcli storage filesystem list
+      # Linux / NAS
+      find / -xdev -type f \( -iname "*readme*" -o -iname "*how_to*" -o -iname "*decrypt*" \) -mmin -1440 2>/dev/null | head
+      ps -eo pid,user,pcpu,lstart,cmd --sort=-pcpu | head -15
+      lsof -p <pid> | head ; cp /proc/<pid>/exe /tmp/ir/encryptor.bin && sha256sum /tmp/ir/encryptor.bin
+      Velociraptor: Linux.Search.FileFinder (SearchFilesGlob=/vmfs/volumes/**/*.{txt,html}, MoreRecentThan=<window>) ; Linux.Triage.ProcessMemory (processPid=<pid>)
+    tested: null
+    attack:
+      - "T1486"
+  - id: "ransomware-response/linux/s10-read-the-contact-channel-from-the-note-on-the-da"
+    status: "active"
+    source: "landing-page@2026-10-10"
+    validated_at: null
+    supersedes: null
+    stage: "Stage 10 · Extortion"
+    stage_ord: 10
+    platform: "Linux / ESXi"
+    title: "Read the contact channel from the note on the datastore"
+    why: "The note on the hypervisor is often the only copy that is not encrypted twice; it carries the.onion URL, Tox id or email and the case id the negotiator needs, and is the sample law enforcement uses to attribute the group. Mail-side contact and leak-site listings are in your mail gateway and threat intel, not here."
+    how: null
+    fp: "Copy one note per variant; the case id is what differs between hosts, and some groups use it to know which system you are negotiating from."
+    query: |-
+      f=$(find /vmfs/volumes -maxdepth 3 -type f \( -iname "*readme*" -o -iname "*how_to*" -o -iname "*recover*" \) -mmin -1440 2>/dev/null | head -1)
+      sha256sum "$f"; cp "$f" /tmp/ir/ ; grep -oiE "[a-z2-7]{16,56}\.onion[^ ]*|tox[: ]+[0-9A-F]{76}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+|id[: ]+[A-Za-z0-9-]{8,}" "$f"
+    tested: null
+    attack:
+      - "T1657"
+steps:
+  - ord: 1
+    time: "T+0–15 min"
+    title: "Declare, name one incident lead, move to out-of-band comms"
+    why: "corporate email and Teams may be encrypted, down, or read by the attacker. One decision owner stops two people containing in conflicting ways. Use the Signal group and printed contact sheet from Ransomware Resilience, Loop 1."
+    critical: true
+  - ord: 2
+    time: "T+0–15 min"
+    title: "Classify the scenario before acting"
+    why: "Is anything encrypted yet? Which planes are touched: endpoints, hypervisors/NAS, backups, identity, cloud storage? Is there a note, a leak-site post, or a phone call? Why: the first hour differs per scenario. Piecemeal, host-by-host containment of an attacker who has not encrypted yet can make them encrypt early — the scenario tells you how wide to cut. Answer the questions in How Far Has It Got?, then pick the matching card in By Scenario."
+    critical: true
+  - ord: 3
+    time: "T+15–30 min"
+    title: "Isolate affected systems and segments"
+    why: "EDR network containment for hosts, switch-port or VLAN shutdown for segments, Kill Internet ( Loop 1, Playbook 1 ) when spread is unclear. Cut at the widest level the attacker could have reached, not host by host. Why: encryption and exfiltration both need the network; isolation stops both and keeps memory and disk intact for forensics. Know what isolation breaks. Isolating the domain controllers or the jump host takes down everything that signs in against AD, often including the VPN and the firewall's admin login. The administrator who has to export the firewall logs and close the VPN is then locked out. Before you cut, list what depends on each host. A local break-glass admin on every edge device ( Loop 1 ) avoids the sequence below. If you are already locked out, in this order: Rotate the jump host's local admin password. Restrict the jump host with its host firewall to the administrator's address. Do this before lifting isolation. Lift isolation on the jump host only, for a short window. The domain controllers stay isolated. Export the firewall and VPN logs. Disable the tunnel groups and the local VPN users. Isolate the jump host again. Contain the user's own device when you disable the account. If it is already offline, containment waits for the next boot; ask the user not to power it on. Stop execution, don't clean: the kill and quarantine actions under Hunt & Act stop a running payload and preserve it as evidence. Compromised hosts are rebuilt from known-good images later, never cleaned in place."
+    critical: true
+  - ord: 4
+    time: "T+30–45 min"
+    title: "Sever and verify the backups"
+    why: "Disconnect the backup infrastructure from production, change the backup console credentials (separate MFA), and confirm an immutable or offline copy exists and when its last clean point is. Tell the client not to wipe, reimage or delete encrypted data until the incident lead confirms that evidence is captured and a restore from backup has been proven. If the backups turn out to be unusable, the encrypted files plus a decryptor are the only way back. Rebuilding hosts from known-good images ( Restore in tier order ) comes after that confirmation, not instead of it. The same goes for further fixes and for any contact with the attacker: nothing without the incident lead. Why: 94% of organisations hit by ransomware saw the attacker try to compromise their backups (Sophos, State of Ransomware 2024). An attacker who sees the response starting deletes them next, and the date of the last clean copy sets the recovery plan and the ransom question. The stage 6 hunts under Hunt & Act (Veeam event ids, ESXi audit VOBs, backup-console logons) tell you whether they already have."
+    critical: true
+  - ord: 5
+    time: "T+45–60 min"
+    title: "Cut the deployment channel"
+    why: "Disable the accounts seen deploying, and look for mass-deployment staging: recently changed GPOs, new scheduled tasks and services, PsExec or RMM pushes. Why: operators push the payload domain-wide through GPO or remote execution. Removing the channel stops the next wave even before every host is isolated."
+    critical: true
+  - ord: 6
+    time: "T+0–60 min"
+    title: "Call the insurer and legal counsel"
+    why: "many policies only cover IR firms and negotiators the insurer has approved, and require notice before you engage them. Counsel directing the investigation keeps the findings privileged. Claim number is on the emergency contact sheet."
+    critical: true
+actions:
+  - platform: "Defender XDR / Sentinel"
+    label: "T+15–30 · Isolate"
+    name: "Isolate every host the attacker could have reached"
+    tier: "destructive"
+    tier_inferred: false
+    why: "isolating only the alerting host tells the operator they are found while the rest of their footholds stay reachable. The API isolates one device per call: run it for every device the hunts above returned, not one per hour."
+    how: "Console: device page › Isolate device (Full). Live Response keeps working on an isolated device."
+    body: |-
+      POST https://api.security.microsoft.com/api/machines/{id}/isolate
+      {"Comment": "IR case #<n>", "IsolationType": "Full"}
+    attack:
+      - "T1489"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+15–30 · Isolate"
+    name: "Contain the accounts the attacker holds, and let attack disruption run"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Contain user blocks the account on every onboarded device (SMB, RDP, service logons) within seconds, without waiting for AD replication or a password reset to propagate; it also covers the window before Kill Authentication is complete. Automatic attack disruption does the same on its own when Defender XDR correlates a human-operated ransomware incident — it isolates devices and contains users and will have started before you open the console. Do not undo its actions during triage; read them in the incident's action centre."
+    how: "Incident page › the user entity › Contain user (needs Defender for Identity and the MDE sensor at version 10.8470 or later; AD accounts are disabled on the DC by the MDI sensor and in Entra if synced). Attack disruption: Settings › Microsoft Defender XDR › Identity automated response; leave it on. Under Hunt & Act, every account the stage 4–5 hunts returned is contained here, then reset in Kill Authentication."
+    body: ""
+    attack:
+      - "T1078.002"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+15–30 · Isolate"
+    name: "Block the payload tenant-wide"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a custom indicator stops the same payload on hosts you have not found yet. For C2, use IpAddress or DomainName with action Block (needs network protection in block mode). Set an expiry: attacker infrastructure rotates."
+    how: null
+    body: |-
+      POST https://api.security.microsoft.com/api/indicators
+      {"indicatorValue": "<sha256>", "indicatorType": "FileSha256",
+       "action": "AlertAndBlock", "title": "IR case #<n>",
+       "description": "Ransomware payload", "expirationTime": "<yyyy-mm-dd>T00:00:00Z"}
+    attack:
+      - "T1486"
+  - platform: "Defender XDR / Sentinel"
+    label: "T+15–30 · Collect"
+    name: "Collect before you stop anything"
+    tier: "destructive"
+    tier_inferred: false
+    why: "killing the payload or rebuilding the host destroys the memory and persistence you need to scope the rest of the estate. Memory comes from Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d; persistence from Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df. Both are pushed through the Live Response library; putfile needs the file uploaded to the library first (Settings › Endpoints › Response actions). Allow unsigned script execution in Advanced features for the duration of the case, then turn it off."
+    how: "Console: device page › Collect investigation package. Then in Live Response (library files uploaded first):"
+    body: |-
+      processes
+      connections
+      persistence
+      scheduledtasks
+      services
+      getfile "C:\path\to\ransom-note.txt"
+      putfile MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      run MagnetRESPONSEv172_Self_Extracting_Archive.exe -parameters "/accepteula /unattended /output:C:\IR\magnet /capturesystemfiles /captureram /capturepagefile"
+      run Get-PersistenceSnapshot.ps1 -parameters "-Zip -OutputPath C:\IR\persistence"
+      getfile "C:\IR\persistence\<host>_<timestamp>.zip"
+    attack: []
+  - platform: "Defender XDR / Sentinel"
+    label: "T+15–30 · Stop"
+    name: "Stop the running payload"
+    tier: "destructive"
+    tier_inferred: false
+    why: "this stops execution and keeps the file as evidence. It is not the fix: the host is rebuilt from a known-good image."
+    how: null
+    body: "remediate process <pid>"
+    attack:
+      - "T1486"
+  - platform: "Defender XDR / Sentinel"
+    label: "Day 1–7 · Scoped"
+    name: "Release hosts one at a time, after the eradication gate"
+    tier: "write"
+    tier_inferred: true
+    why: "releasing isolation reconnects the host. Do it per host, once it is rebuilt and the restore gate is met — never in bulk while the scope is still open."
+    how: "Console: device page › Release from isolation."
+    body: |-
+      POST https://api.security.microsoft.com/api/machines/{id}/unisolate
+      {"Comment": "IR case #<n>: rebuilt, gate met"}
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "T+15–30 · Isolate"
+    name: "Contain every host in scope in one call"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the contain action takes up to 100 host IDs per call, so everything the hunts above turned up goes dark together instead of one host at a time. RTR keeps working on a contained host."
+    how: "Console: Host management › select the hosts › Network contain."
+    body: |-
+      POST /devices/entities/devices-actions/v2?action_name=contain
+      {"ids": ["<AID>", "<AID>", "<AID>"]}
+    attack:
+      - "T1489"
+  - platform: "CrowdStrike Falcon"
+    label: "T+15–30 · Isolate"
+    name: "Block the payload hash fleet-wide"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a custom IOC with action prevent stops the payload on hosts you have not found yet. Domain and IP IOCs can only detect, not block — cut C2 at the firewall or proxy. Set an expiry."
+    how: null
+    body: |-
+      POST /iocs/entities/indicators/v1
+      {"indicators": [{"type": "sha256", "value": "<sha256>",
+        "action": "prevent", "platforms": ["windows"],
+        "applied_globally": true, "severity": "high",
+        "expiration": "<yyyy-mm-dd>T00:00:00Z",
+        "description": "IR case #<n>: ransomware payload"}]}
+    attack:
+      - "T1486"
+  - platform: "CrowdStrike Falcon"
+    label: "T+15–30 · Collect"
+    name: "Collect before you stop anything"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the process, its persistence and memory are what scope the rest of the estate; killing or rebuilding first destroys them. Full memory: Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d (RTR memdump dumps one process, not RAM). Persistence: Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df. Upload both under Host setup and management › Response scripts and files first; put and runscript -CloudFile need the Active Responder or RTR Administrator role."
+    how: "In RTR (Active Responder for get, put, memdump and eventlog; RTR Administrator for run ):"
+    body: |-
+      ps
+      netstat
+      reg query HKLM\Software\Microsoft\Windows\CurrentVersion\Run
+      runscript -Raw=```Get-ScheduledTask | Where-Object State -ne 'Disabled' | Select TaskName,TaskPath```
+      get C:\path\to\ransom-note.txt
+      mkdir C:\IR
+      put MagnetRESPONSEv172_Self_Extracting_Archive.exe
+      run "C:\MagnetRESPONSEv172_Self_Extracting_Archive.exe" -CommandLine="/accepteula /unattended /output:C:\IR\magnet /capturesystemfiles /captureram /capturepagefile"
+      runscript -CloudFile="Get-PersistenceSnapshot.ps1" -CommandLine="-Zip -OutputPath C:\IR\persistence"
+      get C:\IR\persistence\<host>_<timestamp>.zip
+      eventlog export Security
+    attack: []
+  - platform: "CrowdStrike Falcon"
+    label: "T+15–30 · Stop"
+    name: "Stop the running payload"
+    tier: "destructive"
+    tier_inferred: false
+    why: "this stops execution and nothing more. The host is rebuilt from a known-good image."
+    how: null
+    body: "kill <pid>"
+    attack:
+      - "T1486"
+  - platform: "CrowdStrike Falcon"
+    label: "Day 1–7 · Scoped"
+    name: "Lift containment one host at a time, after the eradication gate"
+    tier: "write"
+    tier_inferred: true
+    why: "lifting containment reconnects the host. Do it per host, once it is rebuilt and the restore gate is met."
+    how: null
+    body: |-
+      POST /devices/entities/devices-actions/v2?action_name=lift_containment
+      {"ids": ["<AID>"]}
+    attack: []
+  - platform: "SentinelOne"
+    label: "T+15–30 · Isolate"
+    name: "Disconnect every agent in scope with one filter"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the disconnect action takes a filter — a list of agent IDs or a whole group — so the scope goes dark in one call. The management connection stays up."
+    how: "Console: Endpoints › select the endpoints › Actions › Disconnect from network."
+    body: |-
+      POST /web/api/v2.1/agents/actions/disconnect
+      {"filter": {"groupIds": ["<groupId>"]}}
+    attack:
+      - "T1489"
+  - platform: "SentinelOne"
+    label: "T+15–30 · Isolate"
+    name: "Blocklist the payload hash for the whole tenant"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a global blocklist entry stops the payload on endpoints you have not found yet. The type must be black_hash; any other value creates an exclusion instead."
+    how: null
+    body: |-
+      POST /web/api/v2.1/restrictions
+      {"filter": {"tenant": true},
+       "data": {"type": "black_hash", "sha256Value": "<sha256>",
+                "osType": "windows", "description": "IR case #<n>"}}
+    attack:
+      - "T1486"
+  - platform: "SentinelOne"
+    label: "T+15–30 · Collect"
+    name: "Collect before you stop anything"
+    tier: "destructive"
+    tier_inferred: false
+    why: "mitigation kills and quarantines the payload; collect it, its persistence and memory first. Upload Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df and get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67 to the RemoteOps Script Library and run them against the affected group with the output set to Fetch. Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d is a binary: stage it on an internal share and have a RemoteOps PowerShell script copy it down and run it, as below. Verify the SHA256 on the host before running."
+    how: "Fetch Files: ransom note, payload, event logs (Security, System, Sysmon). RemoteOps script (PowerShell) across the affected group, or Remote Shell on one host:"
+    body: |-
+      New-Item -ItemType Directory -Force C:\IR | Out-Null
+      Copy-Item \\<evidence-share>\ir\MagnetRESPONSEv172_Self_Extracting_Archive.exe C:\IR\
+      if ((Get-FileHash C:\IR\MagnetRESPONSEv172_Self_Extracting_Archive.exe).Hash -ne 'D315C63D1AD4B89E03C7688B29169E977C2ABC4559C23B9F6B2282F3C91A6C7D') { throw 'hash mismatch' }
+      Start-Process C:\IR\MagnetRESPONSEv172_Self_Extracting_Archive.exe -ArgumentList '/accepteula /unattended /output:C:\IR\magnet /capturesystemfiles /captureram /capturepagefile' -Wait
+      .\Get-PersistenceSnapshot.ps1 -Zip -OutputPath C:\IR\persistence
+      Get-Process | Select-Object Id, ProcessName, Path, StartTime
+      Get-NetTCPConnection -State Established | Select-Object LocalPort, RemoteAddress, RemotePort, OwningProcess
+      Get-ScheduledTask | Where-Object State -ne 'Disabled' | Select-Object TaskName, TaskPath
+    attack: []
+  - platform: "SentinelOne"
+    label: "T+15–30 · Stop"
+    name: "Stop the payload; roll back only what you need"
+    tier: "destructive"
+    tier_inferred: false
+    why: "kill and quarantine stop execution. Rollback restores files from VSS on Windows if the shadow copies survived. Neither makes the host trustworthy again: it is rebuilt from a known-good image."
+    how: "Console: Threat › Mitigation › Kill, Quarantine (then Rollback if needed)."
+    body: ""
+    attack:
+      - "T1486"
+  - platform: "SentinelOne"
+    label: "Day 1–7 · Scoped"
+    name: "Reconnect one endpoint at a time, after the eradication gate"
+    tier: "write"
+    tier_inferred: true
+    why: "reconnecting puts the host back on the network. Do it per endpoint, once it is rebuilt and the restore gate is met."
+    how: null
+    body: |-
+      POST /web/api/v2.1/agents/actions/connect
+      {"filter": {"ids": ["<agentId>"]}}
+    attack: []
+  - platform: "Velociraptor"
+    label: "T+15–30 · Isolate"
+    name: "Quarantine every client in scope with one hunt"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a hunt runs the quarantine on every client with the label at once. The IPsec policy (Windows) or nftables table (Linux) leaves only DNS, DHCP and the Velociraptor server reachable, so collection keeps working."
+    how: "Label the in-scope clients, then Hunt Manager › New Hunt › Include Condition: Match by label › artifact:"
+    body: |-
+      Windows.Remediation.Quarantine
+      Linux.Remediation.Quarantine
+    attack:
+      - "T1489"
+  - platform: "Velociraptor"
+    label: "T+15–30 · Isolate"
+    name: "Block the payload and C2 outside Velociraptor"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Velociraptor has no blocklist. The quarantine covers the clients you labelled; hosts you have not found yet need the hash blocked in your EDR or AV and the C2 blocked at the firewall."
+    how: null
+    body: ""
+    attack: []
+  - platform: "Velociraptor"
+    label: "T+15–30 · Collect"
+    name: "Collect before you stop anything"
+    tier: "destructive"
+    tier_inferred: false
+    why: "memory, the process tree and persistence are what scope the rest of the estate; stopping or rebuilding first destroys them. Run these as a hunt over the same label. Full memory: Windows.Memory.Acquisition (WinPmem) is the native route; Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d adds the pagefile and triage files when you want one package for the IR firm. Persistence: Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df and get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67. The cleanest way to push a file is a custom artifact with a tools: entry (the server serves the binary and checks its hash); the quick way is Windows.System.PowerShell / Linux.Sys.BashShell with the URL of your evidence share, as below. Windows.Memory.ProcessDump takes ProcessRegex or PidRegex."
+    how: null
+    body: |-
+      Windows.System.Pslist
+      Windows.Network.NetstatEnriched
+      Windows.System.TaskScheduler
+      Windows.System.Services
+      Windows.Sys.StartupItems
+      Windows.Sysinternals.Autoruns
+      Windows.Memory.Acquisition
+      Windows.Memory.ProcessDump
+      Windows.EventLogs.EvtxHunter
+      Windows.System.PowerShell
+        Command = Invoke-WebRequest https://<evidence-server>/ir/MagnetRESPONSEv172_Self_Extracting_Archive.exe -OutFile C:\IR\magnet.exe; if ((Get-FileHash C:\IR\magnet.exe).Hash -ne 'D315C63D1AD4B89E03C7688B29169E977C2ABC4559C23B9F6B2282F3C91A6C7D') { throw 'hash' }; Start-Process C:\IR\magnet.exe -ArgumentList '/accepteula /unattended /output:C:\IR\magnet /capturesystemfiles /captureram /capturepagefile' -Wait
+      Windows.System.PowerShell
+        Command = Invoke-WebRequest https://<evidence-server>/ir/Get-PersistenceSnapshot.ps1 -OutFile C:\IR\gps.ps1; C:\IR\gps.ps1 -Zip -OutputPath C:\IR\persistence
+        StdoutUpload = Y
+      Linux.Sys.BashShell
+        Command = curl -fsSLo /tmp/gps.sh https://<evidence-server>/ir/get-persistence-snapshot.sh && echo "8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67  /tmp/gps.sh" | sha256sum -c && bash /tmp/gps.sh --zip -o /tmp/ir-persistence
+      Linux.Search.FileFinder
+        SearchFilesGlob = /tmp/ir-persistence*.tar.gz
+        Upload_File = Y
+    attack: []
+  - platform: "Velociraptor"
+    label: "T+15–30 · Stop"
+    name: "Stop the running payload"
+    tier: "destructive"
+    tier_inferred: false
+    why: "this stops execution and nothing more. The host is rebuilt from a known-good image."
+    how: null
+    body: |-
+      Windows.System.PowerShell
+        Command = Stop-Process -Id <pid> -Force
+      Linux.Sys.BashShell
+        Command = kill -STOP <pid>    (freeze rather than kill while memory is still being collected)
+    attack:
+      - "T1486"
+  - platform: "Velociraptor"
+    label: "Day 1–7 · Scoped"
+    name: "Lift the quarantine one client at a time, after the eradication gate"
+    tier: "destructive"
+    tier_inferred: false
+    why: "removing the policy reconnects the host. Do it per client, once it is rebuilt and the restore gate is met."
+    how: null
+    body: |-
+      Windows.Remediation.Quarantine
+        RemovePolicy = true
+      Linux.Remediation.Quarantine
+        RemovePolicy = true
+    attack: []
+  - platform: "Splunk"
+    label: "T+15–30 · Isolate"
+    name: "Act in the EDR, against everything the searches returned"
+    tier: "destructive"
+    tier_inferred: false
+    why: "Splunk is where you hunt, not where you act. Take the full host and account list from the searches above to the EDR tab and contain it in one pass."
+    how: "With Splunk SOAR, a playbook can run the EDR's contain action against every host in the search results at once."
+    body: ""
+    attack:
+      - "T1489"
+  - platform: "Splunk"
+    label: "T+15–30 · Collect"
+    name: "Collect through the EDR, and export the searches that scoped the case"
+    tier: "write"
+    tier_inferred: false
+    why: "memory and persistence are collected with the EDR's push mechanism (Live Response, RTR, RemoteOps or Velociraptor tabs) using Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d, Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df and get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67. What Splunk owns is the timeline: export every search above as raw events before the index rolls (hot/warm retention is yours to check with | rest /services/data/indexes ), and freeze the buckets for the dwell window."
+    how: null
+    body: |-
+      | rest /services/data/indexes | table title frozenTimePeriodInSecs maxTotalDataSizeMB
+      index=windows earliest=<dwell start> latest=now host IN (<affected hosts>) | outputcsv ir_case_<n>_windows.csv
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "T+15–30 · Isolate"
+    name: "Isolate every endpoint in scope in one call"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the isolate API takes a list of endpoint IDs, so everything the searches above returned goes dark together."
+    how: "Console (Elastic Defend): host › Take action › Isolate host. Wazuh ships no isolation script: an active-response script run through PUT /active-response has to be written and tested before you need it."
+    body: |-
+      POST /api/endpoint/action/isolate
+      {"endpoint_ids": ["<endpoint_id>", "<endpoint_id>"], "comment": "IR case #<n>"}
+    attack:
+      - "T1489"
+  - platform: "Elastic / Wazuh"
+    label: "T+15–30 · Isolate"
+    name: "Blocklist the payload hash"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a blocklist entry stops the payload on endpoints you have not found yet. Apply it globally, not to one policy."
+    how: "Console: Artifacts › Blocklist tab (the Blocklist page before 9.4) › Add blocklist entry › hash, Assignment: Global."
+    body: ""
+    attack:
+      - "T1486"
+  - platform: "Elastic / Wazuh"
+    label: "T+15–30 · Collect"
+    name: "Collect before you stop anything"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the running process and the note identify the payload and the variant; killing first loses them. Full memory: Magnet RESPONSE 1.7.2 d315c63d1ad4b89e03c7688b29169e977c2abc4559c23b9f6b2282f3c91a6c7d. Persistence: Get-PersistenceSnapshot.ps1 a9534865f9e8e7b1f5077b4e1cfd8c29e7e32f6e9e49a4918ce4f8fb713e64df on Windows, get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67 on Linux. upload pushes a file from your workstation to the host; execute runs it with cmd.exe (Windows) or bash (Linux); get-file brings the output back. execute and upload need the matching response-action privileges on the Kibana role."
+    how: "In the Elastic response console:"
+    body: |-
+      processes
+      get-file --path "C:\path\to\ransom-note.txt"
+      upload --file MagnetRESPONSEv172_Self_Extracting_Archive.exe --overwrite
+      execute --command "C:\Program Files\Elastic\Endpoint\state\<upload-path>\MagnetRESPONSEv172_Self_Extracting_Archive.exe /accepteula /unattended /output:C:\IR\magnet /capturesystemfiles /captureram /capturepagefile" --timeout 30m
+      upload --file Get-PersistenceSnapshot.ps1
+      execute --command "powershell -ExecutionPolicy Bypass -File <upload-path>\Get-PersistenceSnapshot.ps1 -Zip -OutputPath C:\IR\persistence"
+      get-file --path "C:\IR\persistence\<host>_<timestamp>.zip"
+      # Linux
+      upload --file get-persistence-snapshot.sh
+      execute --command "bash <upload-path>/get-persistence-snapshot.sh --zip -o /tmp/ir-persistence"
+      get-file --path "/tmp/ir-persistence.tar.gz"
+    attack: []
+  - platform: "Elastic / Wazuh"
+    label: "T+15–30 · Stop"
+    name: "Stop the running payload"
+    tier: "destructive"
+    tier_inferred: false
+    why: "this stops execution and nothing more. The host is rebuilt from a known-good image."
+    how: null
+    body: "kill-process --pid <pid>"
+    attack:
+      - "T1486"
+  - platform: "Elastic / Wazuh"
+    label: "Day 1–7 · Scoped"
+    name: "Release one endpoint at a time, after the eradication gate"
+    tier: "write"
+    tier_inferred: true
+    why: "releasing reconnects the host. Do it per endpoint, once it is rebuilt and the restore gate is met."
+    how: null
+    body: |-
+      POST /api/endpoint/action/unisolate
+      {"endpoint_ids": ["<endpoint_id>"], "comment": "IR case #<n>: rebuilt, gate met"}
+    attack: []
+  - platform: "Linux / ESXi"
+    label: "T+15–30 · Collect"
+    name: "Copy the logs and take a memory-inclusive snapshot before anything else"
+    tier: "write"
+    tier_inferred: false
+    why: "ESXi logs live on a ramdisk and are gone at reboot; vm-support bundles every log and configuration file with a manifest, and a VM snapshot with memory preserves the running state of each guest while the host stays up. On Linux and NAS, get-persistence-snapshot.sh 8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67 records every persistence location with hashes and package verification; AVML or LiME takes the memory. There is no RAM acquisition for the ESXi kernel itself; the per-VM snapshot is the memory evidence."
+    how: "Everything below is read-only or additive. Write to a datastore or USB that the encryptor has not touched, and record the SHA256 of each output in the case."
+    body: |-
+      # ESXi
+      vm-support -w /vmfs/volumes/<clean-datastore>/ir            # full log and config bundle, with manifest
+      tar czf /vmfs/volumes/<clean-datastore>/ir/logs-$(hostname)-$(date -u +%Y%m%dT%H%MZ).tgz /var/run/log /etc/rc.local.d /etc/ssh
+      for v in $(vim-cmd vmsvc/getallvms | awk 'NR>1{print $1}'); do vim-cmd vmsvc/snapshot.create $v "IR-<case>" "pre-response, with memory" 1 0; done
+      sha256sum /vmfs/volumes/<clean-datastore>/ir/*
+      # Linux / NAS
+      mkdir -p /tmp/ir && curl -fsSLo /tmp/ir/gps.sh https://<evidence-server>/ir/get-persistence-snapshot.sh && echo "8fe386a7d6ebd50225b04ad83581ee3e5d504a10a4263253b5a11b8a61eeca67  /tmp/ir/gps.sh" | sha256sum -c && sudo bash /tmp/ir/gps.sh --zip -o /tmp/ir/persistence
+      sudo ./avml /tmp/ir/memory-$(hostname).lime && sha256sum /tmp/ir/memory-*.lime
+      sudo tar czf /tmp/ir/logs-$(hostname).tgz /var/log /etc/cron* /etc/systemd /etc/ssh /root/.ssh /home/*/.ssh
+      Velociraptor: Linux.Sys.BashShell (Command=<the lines above>) ; Linux.Search.FileFinder (SearchFilesGlob=/tmp/ir/**, Upload_File=Y)
+    attack: []
+  - platform: "Linux / ESXi"
+    label: "T+15–30 · Stop"
+    name: "Freeze the encryptor, keep the binary"
+    tier: "destructive"
+    tier_inferred: false
+    why: "kill -STOP halts the process without destroying its memory, which may still hold the key; copy the binary out of /proc first because many encryptors delete themselves from disk. Kill it only after memory is captured."
+    how: null
+    body: |-
+      # ESXi (busybox): find the writer, freeze it, keep the binary
+      ps -c | grep -vE "vmx|hostd|vpxa" | head
+      kill -STOP <pid>
+      cp /proc/<pid>/exe /vmfs/volumes/<clean-datastore>/ir/encryptor.bin 2>/dev/null; sha256sum /vmfs/volumes/<clean-datastore>/ir/encryptor.bin
+      # Linux / NAS
+      kill -STOP <pid>; cp /proc/<pid>/exe /tmp/ir/encryptor.bin; sha256sum /tmp/ir/encryptor.bin
+    attack:
+      - "T1486"
+  - platform: "Linux / ESXi"
+    label: "T+15–30 · Isolate"
+    name: "Close the shell, re-enter lockdown, cut the management path"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the attacker's path into ESXi is SSH or the shell they enabled; closing it and re-entering lockdown mode makes vCenter the only way in. Do this after the logs are copied: the commands themselves land in shell.log and you want the attacker's entries intact first. The NAS admin interface is isolated at the firewall or switch, not on the appliance."
+    how: null
+    body: |-
+      vim-cmd hostsvc/disable_ssh
+      vim-cmd hostsvc/disable_esx_shell
+      vim-cmd hostsvc/disable_remote_tsm
+      vim-cmd vimsvc/auth/lockdown_mode_enter
+      esxcli network firewall ruleset set --ruleset-id sshServer --enabled false
+      esxcli system settings advanced set -o /Config/HostAgent/plugins/hostsvc/esxAdminsGroup -s "IR-no-such-group"
+      # Linux / NAS: Velociraptor Linux.Remediation.Quarantine on labelled clients; otherwise the switch port
+    attack:
+      - "T1021.004"
+  - platform: "Linux / ESXi"
+    label: "Hour 1–24 · Kill auth"
+    name: "Rotate root, vCenter SSO and every account that reaches the management plane"
+    tier: "destructive"
+    tier_inferred: false
+    why: "the credential they used is still valid until it is changed, and a root password reset on one host does not touch the others or vCenter. Rotate root on every host, reset administrator@vsphere.local with vdcadmintool on the VCSA, remove the AD group mapping, and change the NAS admin and every service account (backup proxy, monitoring) that can log in to these hosts. Then verify the new credentials work before the old sessions are killed, from a known-good workstation."
+    how: null
+    body: |-
+      # every ESXi host
+      esxcli system account set -i root -p '<new>' -c '<new>'
+      esxcli system account list
+      # VCSA: reset the SSO administrator
+      /usr/lib/vmware-vmdir/bin/vdcadmintool          # option 3: Reset account password, administrator@vsphere.local
+      # Linux / NAS
+      passwd root; for u in $(awk -F: '$3>=1000 && $1!="nobody"{print $1}' /etc/passwd); do passwd -e $u; done
+      find / -xdev -name authorized_keys -newermt "-<dwell> days" 2>/dev/null
+    attack:
+      - "T1078"
+  - platform: "Linux / ESXi"
+    label: "Day 1–7 · Scoped"
+    name: "Rebuild the host, restore VMs from a clean point, then re-enable management one host at a time"
+    tier: "write"
+    tier_inferred: true
+    why: "an ESXi host that ran attacker code is reinstalled from vendor media, not cleaned; the datastore is restored from backup or the pre-encryption snapshot, and lockdown stays on. Re-enable each host only after the eradication gate on the page is met and the Linux stage 2 and 6 hunts come back empty on the rebuilt host."
+    how: null
+    body: |-
+      esxcli software acceptance set --level=PartnerSupported
+      esxcli system settings kernel set -s execInstalledOnly -v TRUE
+      esxcli system syslog config set --loghost='tcp://<siem>:514' && esxcli system syslog reload
+      vim-cmd vimsvc/auth/lockdown_is_enabled
+    attack: []
