@@ -1,7 +1,7 @@
 {
   "exact": {
     "arm": "exact",
-    "cases": 40,
+    "cases": 46,
     "case_ids": [
       "rw-encrypting-now",
       "rw-recon-no-encryption",
@@ -42,12 +42,18 @@
       "edge-vapor-panda-campaign",
       "edge-php-fpm-shell",
       "edge-firewall-after-patch",
-      "edge-tunnel-ip-other-account"
+      "edge-tunnel-ip-other-account",
+      "k8s-sa-token-from-outside",
+      "k8s-anonymous-kubelet",
+      "k8s-pod-metadata-service",
+      "k8s-cluster-admin-privileged-daemonset",
+      "k8s-backdoored-image",
+      "k8s-agent-speed-parallel"
     ],
-    "top1": 0.8,
-    "recall_at_2": 0.9,
-    "recall_at_8": 0.975,
-    "mrr": 0.8696,
+    "top1": 0.8043,
+    "recall_at_2": 0.913,
+    "recall_at_8": 0.9783,
+    "mrr": 0.8757,
     "precision_violations": [],
     "passing_at_2": [
       "rw-encrypting-now",
@@ -85,12 +91,18 @@
       "edge-php-crash-no-shell",
       "edge-panos-rooted-report",
       "edge-vapor-panda-campaign",
-      "edge-tunnel-ip-other-account"
+      "edge-tunnel-ip-other-account",
+      "k8s-sa-token-from-outside",
+      "k8s-anonymous-kubelet",
+      "k8s-pod-metadata-service",
+      "k8s-cluster-admin-privileged-daemonset",
+      "k8s-backdoored-image",
+      "k8s-agent-speed-parallel"
     ]
   },
   "hybrid": {
     "arm": "hybrid",
-    "cases": 40,
+    "cases": 46,
     "case_ids": [
       "rw-encrypting-now",
       "rw-recon-no-encryption",
@@ -131,12 +143,18 @@
       "edge-vapor-panda-campaign",
       "edge-php-fpm-shell",
       "edge-firewall-after-patch",
-      "edge-tunnel-ip-other-account"
+      "edge-tunnel-ip-other-account",
+      "k8s-sa-token-from-outside",
+      "k8s-anonymous-kubelet",
+      "k8s-pod-metadata-service",
+      "k8s-cluster-admin-privileged-daemonset",
+      "k8s-backdoored-image",
+      "k8s-agent-speed-parallel"
     ],
-    "top1": 0.825,
-    "recall_at_2": 0.95,
+    "top1": 0.8478,
+    "recall_at_2": 0.9565,
     "recall_at_8": 1,
-    "mrr": 0.9008,
+    "mrr": 0.9138,
     "precision_violations": [],
     "passing_at_2": [
       "rw-encrypting-now",
@@ -176,7 +194,13 @@
       "edge-sdwan-advisory",
       "edge-panos-rooted-report",
       "edge-php-fpm-shell",
-      "edge-tunnel-ip-other-account"
+      "edge-tunnel-ip-other-account",
+      "k8s-sa-token-from-outside",
+      "k8s-anonymous-kubelet",
+      "k8s-pod-metadata-service",
+      "k8s-cluster-admin-privileged-daemonset",
+      "k8s-backdoored-image",
+      "k8s-agent-speed-parallel"
     ]
   }
 }

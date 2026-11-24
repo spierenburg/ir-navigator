@@ -57,9 +57,9 @@ test("throws on a malformed playbook rather than loading partial data", async ()
   rmSync(d, { recursive: true, force: true });
 });
 
-test("the migrated corpus loads: 8 playbooks, full criteria set, coverage gaps visible", async () => {
+test("the migrated corpus loads: 9 playbooks, full criteria set, coverage gaps visible", async () => {
   const c = await loadCorpus(join(import.meta.dir, "..", "criteria"));
-  expect(c.playbooks).toHaveLength(8);
+  expect(c.playbooks).toHaveLength(9);
   // Floors, not exact pins: promotions legitimately grow the corpus after the fork.
   expect(c.criteria.length).toBeGreaterThanOrEqual(392);
   expect(c.scenarios.length).toBeGreaterThanOrEqual(30);
