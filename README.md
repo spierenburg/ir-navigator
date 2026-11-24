@@ -75,7 +75,7 @@ own case material, with public CTI confirming the gap. The scope docs in
                  ▼                            criteria/   index/     provenance.jsonl
    ┌─────────────────────────────┐            *.yaml      vectors.json   (deliveries +
    │ criteria/*.yaml             │◀───────────────┘       coverage.json   decisions)
-   │ 8 playbooks, source of truth│                            ▲               │
+   │ 9 playbooks, source of truth│                            ▲               │
    └──────────────┬──────────────┘                            │               │
                   │ bun run build:index  (embeddings host)    │               │
                   ├──────────────────────────────────────────▶│               │
@@ -86,10 +86,10 @@ own case material, with public CTI confirming the gap. The scope docs in
    "no playbook fit" / review --stale ◀───────────────────────────────────────┘
 ```
 
-- **Corpus** (`criteria/`): 8 playbooks, 421 criteria, 37 served scenarios
-  and 11 in draft, 48 IR steps, 176 platform actions, all hand-editable YAML.
+- **Corpus** (`criteria/`): 9 playbooks, 434 criteria, 43 served scenarios
+  and 11 in draft, 56 IR steps, 187 platform actions, all hand-editable YAML.
   392 criteria were forked from the author's published playbooks on
-  2026-10-10; 29 have since been distilled from reports, cases and runbooks,
+  2026-10-10; 42 have since been distilled from reports, cases and runbooks,
   each naming its source. Read tools serve `status: active` only.
 - **Index** (`index/vectors.json`): committed embeddings, hash-guarded against
   the corpus. Ranking is hybrid: exact-term with negation ("nothing is
@@ -273,7 +273,7 @@ IRNAV_EMBED_URL=… bun run eval --semantic      # hybrid arm, needs the embeddi
 bun run eval [--semantic] --write-baseline     # accept the current scores
 ```
 
-`eval/cases.ts` holds 40 labelled evidence → expected scenario cases, written in
+`eval/cases.ts` holds 46 labelled evidence → expected scenario cases, written in
 an analyst's words rather than copied from the indicators. Some also name a
 confusable reading the evidence must not put first. The run reports top-1,
 recall@2 (whether invariant 1's two readings include the right one), recall@8
@@ -328,6 +328,7 @@ test/                bun:test suites, fixtures in test/fixtures.ts
 docs/
   distilling-playbooks.md        the method: from incident or report to served playbook
   edge-exploitation-scope.md     worked example, promoted 2026-10-31
+  kubernetes-compromise-scope.md worked example, scoped and drafted 2026-11-07
   targeted-intrusion-scope.md    worked example, scoped and not yet drafted
   SPEC.md                        design, as-built deltas, review-gate contract
   redaction.md                   what provenance redaction catches and misses

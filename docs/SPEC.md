@@ -127,8 +127,9 @@ author's call ("fork into own criteria schema"):
      gates `bun test` as a ratchet against `eval/baseline.json`; the hybrid
      arm needs the embedding host and runs by hand. First measured 2026-10-25
      on 32 cases (exact 0.84 / 0.94 / 1.00 / 0.91, hybrid 0.97 / 0.97 / 1.00 /
-     0.98). The committed baseline, 40 cases after the eight edge cases were
-     added:
+     0.98). The baseline at 40 cases, after the eight edge cases were added
+     (the committed one is now 46 cases, with the six Kubernetes cases: exact
+     0.80 / 0.91 / 0.98 / 0.88, hybrid 0.85 / 0.96 / 1.00 / 0.91):
      | arm | top-1 | recall@2 | recall@8 | MRR |
      |---|---|---|---|---|
      | exact | 0.80 | 0.90 | 0.975 | 0.87 |
@@ -173,9 +174,9 @@ author's call ("fork into own criteria schema"):
       only when flipped to `active`. BEC and device-code carry eleven drafts;
       the edge playbook's five went active with its nine criteria.
     - *Sources are the provenance.* 392 criteria carry
-      `landing-page@2026-10-10`; 29 carry a report, advisory, case id or
-      runbook reference. The corpus is 8 playbooks, 421 criteria, 37 served
-      scenarios, 48 steps, 176 actions. The edge playbook has no steps or
+      `landing-page@2026-10-10`; 42 carry a report, advisory, case id or
+      runbook reference. The corpus is 9 playbooks, 434 criteria, 43 served
+      scenarios, 56 steps, 187 actions. The edge playbook has no steps or
       actions yet.
     - *Eval cases are written from the gap cases.* The cases that showed the
       gap became the first eval cases for the playbook (eight of the 40).
@@ -455,7 +456,7 @@ Two findings that constrain the build:
 
 ```mermaid
 flowchart LR
-    H[7 published playbooks] -.one-time fork,<br/>2026-10-10.-> Y[(criteria/*.yaml<br/>8 playbooks, source of truth)]
+    H[7 published playbooks] -.one-time fork,<br/>2026-10-10.-> Y[(criteria/*.yaml<br/>9 playbooks, source of truth)]
     Y -->|build: llama.cpp embeddings| V[(index/vectors.json)]
     Y --> M[ir-navigator MCP<br/>7 tools]
     V --> M

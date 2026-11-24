@@ -272,4 +272,47 @@ export const CASES: EvalCase[] = [
     evidence:
       "A domain controller logon came from an address in the VPN pool, but the account that logged on is not the VPN user who held that tunnel address at the time.",
   },
+  // kubernetes-compromise-response. Written from the cases in docs/kubernetes-compromise-scope.md, not lifted from the
+  // scenario indicators. The confusable neighbours are the cloud-key and non-human-identity
+  // readings that ir_classify put first before this playbook existed.
+  {
+    id: "k8s-sa-token-from-outside",
+    expected: "kubernetes-compromise-response/scenario-1",
+    must_not_top1: ["cloud-incident-response/scenario-1"],
+    evidence:
+      "The kube-apiserver audit log shows one of our pods' service accounts listing secrets in several namespaces from a curl user agent on a public IP. The workload only ever talks to its own database. Nothing is encrypted.",
+  },
+  {
+    id: "k8s-anonymous-kubelet",
+    expected: "kubernetes-compromise-response/scenario-2",
+    evidence:
+      "A scan shows the kubelet on one worker node answering on port 10250 from outside, and anonymous requests as system:anonymous are being allowed. We never set --anonymous-auth=false. No audit events on the apiserver cover it.",
+  },
+  {
+    id: "k8s-pod-metadata-service",
+    expected: "kubernetes-compromise-response/scenario-3",
+    must_not_top1: ["cloud-incident-response/scenario-5"],
+    evidence:
+      "Falco alerted that a container in a web app pod launched sh and then connected out to the instance metadata IP of the node's cloud account. The application itself was exploited through a file upload. The apiserver audit log shows nothing inside the container.",
+  },
+  {
+    id: "k8s-cluster-admin-privileged-daemonset",
+    expected: "kubernetes-compromise-response/scenario-4",
+    must_not_top1: ["cloud-incident-response/scenario-1", "identity-breach-response/scenario-6"],
+    evidence:
+      "Audit events show a new ClusterRoleBinding to cluster-admin created by a workload identity, then a privileged DaemonSet with a hostPath mount of / scheduled into kube-system. One node ran it. Nothing is encrypted and there is no ransom note.",
+  },
+  {
+    id: "k8s-backdoored-image",
+    expected: "kubernetes-compromise-response/scenario-5",
+    must_not_top1: ["supply-chain-response/scenario-2"],
+    evidence:
+      "We found pods in two namespaces running a container image whose registry digest no longer matches the one our pipeline built and signed. The running pods have database passwords and API keys mounted into their environment.",
+  },
+  {
+    id: "k8s-agent-speed-parallel",
+    expected: "kubernetes-compromise-response/scenario-6",
+    evidence:
+      "In under an hour one source drove tens of thousands of API calls against our cluster, hitting the web app, the cloud metadata service, several service account tokens and Active Directory at the same time, with the operator's own notes recovered from a dropped workspace tying all of it to one campaign. It went from first access to privileged in minutes.",
+  },
 ];

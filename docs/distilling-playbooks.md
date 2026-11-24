@@ -84,7 +84,7 @@ check it. Two ways in:
   simpler when several criteria come from one source.
 
 The source string is the provenance. Of the corpus today, 392 criteria carry
-`landing-page@2026-10-10` (the original fork) and 29 carry a report, case or
+`landing-page@2026-10-10` (the original fork) and 42 carry a report, case or
 runbook reference. That second number is the distilled part of the corpus.
 
 ## 5. Review and promote

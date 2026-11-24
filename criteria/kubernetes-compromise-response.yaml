@@ -1,0 +1,568 @@
+# Source of truth for this playbook's IR criteria.
+# Hand-edit freely. Re-run 'bun run build:index' after any change.
+playbook: "kubernetes-compromise-response"
+title: "Kubernetes Cluster Compromise and Eviction Response"
+platforms:
+  - "Defender XDR / Sentinel"
+  - "CrowdStrike Falcon"
+  - "SentinelOne"
+  - "Velociraptor"
+  - "Splunk"
+  - "Elastic / Wazuh"
+  - "Kubernetes audit logs"
+  - "Falco"
+  - "kubectl"
+scenarios:
+  - id: "1"
+    status: "active"
+    source: "docs/kubernetes-compromise-scope.md@2026-11-07; kubernetesforensics.com/en/blog/kubernetes-incident-response-audit-logs (2026-09-01); kubernetes.io/docs/concepts/security/service-accounts"
+    validated_at: "2026-11-07"
+    supersedes: null
+    name: "Service Account Token Out of Its Pod"
+    indicators: "a Kubernetes service account (system:serviceaccount:<namespace>:<name>) in kube-apiserver audit events with a kubectl or curl User-Agent, or from an IP outside the pod network; bursts of secret reads or self-access-review calls attributed to a workload identity that normally reaches only its own backend."
+    discriminator: "The control plane is the kube-apiserver and the credential is a Kubernetes JWT, not a cloud key. There is no call that revokes an issued token: a token bound to a Pod stops working when the Pod is deleted, one bound to a Secret when the Secret is deleted, and all tokens of a ServiceAccount only when the ServiceAccount is deleted and recreated so its UID changes. Against cloud-incident-response: a cloud IAM identity mapped into the cluster is revoked in the cloud; this reading is the in-cluster service account itself."
+    attack: ["T1528", "T1552.007"]
+    window: "14d back from the first anomalous request by the identity"
+  - id: "2"
+    status: "active"
+    source: "docs/kubernetes-compromise-scope.md@2026-11-07; kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz; microsoft.github.io/Threat-Matrix-for-Kubernetes (Exposed sensitive interfaces)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    name: "Exposed Control-Plane Surface"
+    indicators: "the API server, a kubelet (port 10250), etcd, or a dashboard reachable from an untrusted network; anonymous requests succeeding (system:anonymous / system:unauthenticated); a management console with mounted credentials answering on a public address."
+    discriminator: "The kubelet's default authorisation mode is AlwaysAllow and anonymous auth is on unless started with --anonymous-auth=false, so a reachable kubelet is command execution on every container on that node. Kubelet-side activity does not produce a kube-apiserver audit event, so the audit log cannot rule this reading out; read the kubelet's own flags and node logs. Exposure is the entry, not the impact: it routes to the identity and execution stages once something authenticates."
+    attack: ["T1133", "T1190"]
+    window: null
+  - id: "3"
+    status: "active"
+    source: "docs/kubernetes-compromise-scope.md@2026-11-07; invictus-ir.com/news/incident-response-in-kubernetes-eks (2026-05-12); docs.aws.amazon.com/eks/latest/best-practices/incident-response-and-forensics"
+    validated_at: "2026-11-07"
+    supersedes: null
+    name: "Compromised Workload as Foothold"
+    indicators: "a container running something it should not (a shell, a scanner, a cryptominer, or sshd inside it); pod egress to the cloud metadata address 169.254.169.254; a web worker in a pod spawning a shell; Falco runtime alerts on exec or sensitive reads inside a running container."
+    discriminator: "Two identities to scope, not one: the pod's own service account, and the node's cloud identity if the pod reached the metadata service (that part hands off to cloud-incident-response). The application exploit that got code into the pod belongs to edge-exploitation-response; this reading starts once code is running in the container. The API server audit log does not see in-container processes, so execution is confirmed from Falco or the node, not from audit events."
+    attack: ["T1610", "T1609", "T1552.005"]
+    window: null
+  - id: "4"
+    status: "active"
+    source: "docs/kubernetes-compromise-scope.md@2026-11-07; kubernetesforensics.com/en/blog/kubernetes-incident-response-audit-logs; nhimg.org/kubernetes-cluster-compromise-playbook (2026-10-27)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    name: "Cluster-Admin or Node Reached"
+    indicators: "a new ClusterRoleBinding to cluster-admin; roles granting escalate, bind or impersonate; a privileged pod or DaemonSet, hostPID, hostNetwork, or a hostPath mount of / or the container runtime socket; get on nodes/proxy; host processes spawned from a container runtime."
+    discriminator: "Patched or deleted is not clean. A node that ran a privileged or host-mounting pod is rebuilt from a clean image, not cleaned, because the kubelet credential and every secret mounted on it are exposed. If cluster-admin, etcd or the service account signing key was reached, the cluster CA and signing keys are rotated or the cluster is rebuilt from infrastructure as code; rotating secrets alone leaves the attacker able to mint identities. get on nodes/proxy is not read-only: it authorises exec on any container on the node."
+    attack: ["T1098.006", "T1611", "T1552.007"]
+    window: null
+  - id: "5"
+    status: "active"
+    source: "docs/kubernetes-compromise-scope.md@2026-11-07; CTI artex-backdoored-docker-image-root (2026-11-05); microsoft.github.io/Threat-Matrix-for-Kubernetes (Compromised image in registry)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    name: "Poisoned or Backdoored Image Running"
+    indicators: "a container image whose registry digest changed, or an image not built by your pipeline, running in production; a known-malicious image (the backdoored ARTEX tomicdd/artex and congdonglinux/artex builds are the 2026-11 example); a pod built FROM an untrusted base."
+    discriminator: "Every pod on the image is compromised and every secret mounted into those pods is rotated, whether or not abuse is proven. Where the image came from and who published it is supply-chain-response; this reading owns the running pods and their mounted secrets. A re-pull does not remove an implant written to a mounted volume, and a one-click updater that pulls the same tag reinstates it."
+    attack: ["T1525", "T1610"]
+    window: null
+  - id: "6"
+    status: "active"
+    source: "docs/kubernetes-compromise-scope.md@2026-11-07; Microsoft Security Blog 2026-10-21 (Storm-0940 / ARTEX); CrowdStrike 2026-10-29 (VAPOR PANDA / ARTEX); own notes 4afc65a6, 7727111e"
+    validated_at: "2026-11-07"
+    supersedes: null
+    name: "Agent-Driven Intrusion (ARTEX-class)"
+    indicators: "a very high volume of API or authentication calls compressed into minutes, several attack paths advancing at once (web, cloud, container, directory), findings progressing from access to privilege faster than a human operator could drive; recovered operator tooling or transcripts; ARTEX markers such as artx/artex command-line strings, artx-prefixed cloud roles, or orchestration-service abuse to reach a production container environment."
+    discriminator: "The intrusion moves at machine speed across several paths simultaneously, so a single-host, one-finding-at-a-time containment loses the race: contain at the widest confident boundary on the first confirmed finding rather than chasing each path. ARTEX is a workflow over ordinary technique, so the per-stage criteria here still apply; what changes is the tempo and the need to correlate parallel findings into one intrusion by their shared tool markers. Using an agentic framework is not itself attribution."
+    attack: ["T1588.007", "T1078", "T1110.003"]
+    window: "from the first authentication anomaly; these campaigns compress to hours"
+criteria:
+  - id: "kubernetes-compromise-response/proposed/an-audit-policy-is-configured-or-there-is-no-record-to-investigate-from"
+    status: "active"
+    source: "kubernetes.io/docs/tasks/debug/debug-cluster/audit (--audit-policy-file: if the flag is omitted, no events are logged); kubernetesforensics.com/en/blog/kubernetes-incident-response-audit-logs (Step 0)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 1 · Exposure"
+    stage_ord: 1
+    platform: "Kubernetes audit logs"
+    title: "Confirm an audit policy exists before trusting the audit log"
+    why: "The kube-apiserver generates audit events only when started with --audit-policy-file naming a policy of at least one rule; with the flag omitted, nothing is logged and a quiet audit log means no recording, not no activity. On managed services the equivalent is the control-plane logging setting (EKS api/audit/authenticator, GKE and AKS exports). Establish that the log exists and covers the window before any absence is read as evidence; if it does not, enable it now and record the gap. Ruled out as a blind spot only when a policy logging at least Metadata for the window is confirmed."
+    how: "Self-managed: check the kube-apiserver manifest for --audit-policy-file and --audit-log-path. EKS: aws eks describe-cluster shows which log types are enabled; turn on api, audit and authenticator. GKE: Cloud Logging; AKS: the kube-audit diagnostic setting. Export the window and store it off-cluster first — logs that expire tomorrow are saved first."
+    fp: null
+    query: ""
+    tested: null
+    attack: []
+  - id: "kubernetes-compromise-response/proposed/the-kubelet-anonymous-and-authorization-settings-are-read-from-the-running-kubel"
+    status: "active"
+    source: "kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz (default authorization mode is AlwaysAllow; anonymous requests become system:anonymous unless --anonymous-auth=false); microsoft.github.io/Threat-Matrix-for-Kubernetes (Exposed sensitive interfaces)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 1 · Exposure"
+    stage_ord: 1
+    platform: "kubectl"
+    title: "A reachable kubelet with default settings is exec on every container on its node"
+    why: "The kubelet HTTPS endpoint treats any request not rejected by another method as system:anonymous, and its default authorisation mode is AlwaysAllow, so an exposed kubelet with defaults authorises commands in any container on the node. get on nodes/proxy grants this too and is not read-only. A reachable API server, etcd or dashboard is the same class of entry. Ruled out only when the kubelet runs --anonymous-auth=false and --authorization-mode=Webhook and the port is not reachable from untrusted networks."
+    how: "Read the running kubelet's config (/var/lib/kubelet/config.yaml or --config), not a baseline file. Check what answers on 10250 from outside the node network. Kubelet activity does not appear in kube-apiserver audit events, so pair this with node logs and Falco."
+    fp: null
+    query: ""
+    tested: null
+    attack: ["T1133"]
+  - id: "kubernetes-compromise-response/proposed/the-acting-identity-is-read-from-the-audit-user-fields-not-the-source-ip-alone"
+    status: "active"
+    source: "kubernetesforensics.com/en/blog/kubernetes-incident-response-audit-logs (Which identity; sourceIPs lists proxy headers first); kubernetes.io/docs/reference/config-api/apiserver-audit.v1; invictus-ir.com/news/incident-response-in-kubernetes-eks"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 2 · Identity"
+    stage_ord: 2
+    platform: "Kubernetes audit logs"
+    title: "The acting identity is user.username plus user-agent, and sourceIPs trailing address, not the first IP"
+    why: "Every API change and most reads carry user.username, user.groups, sourceIPs, userAgent and the verb and resource. A service account (system:serviceaccount:ns:name) driven with kubectl/ or curl/ in the user agent, or from a public IP, is a token that left its pod; a human identity acting oddly needs its owner called before any conclusion. All but the last entry in sourceIPs can be set by the client, so trust the trailing address. Ruled out as malicious when the identity, user agent and trailing source IP all match the workload's normal behaviour."
+    how: "EKS maps the AWS IAM identity in the authenticator log; check it to tie a leaked AWS key to a Kubernetes user or group. Filter all events for the identity and its source IPs and take the earliest; reconnaissance (/version, /api, discovery, auth can-i) usually precedes the noisy activity, so if the earliest event is at the start of the export, extend the export back."
+    fp: "Controllers, kubelets renewing leases and monitoring agents list pods and read endpoints constantly from in-cluster IPs with their own user agents; those are the baseline, not the finding."
+    query: ""
+    tested: null
+    attack: ["T1078"]
+  - id: "kubernetes-compromise-response/proposed/self-access-review-bursts-and-403s-are-the-token-being-tested"
+    status: "active"
+    source: "kubernetesforensics.com/en/blog/kubernetes-incident-response-audit-logs (Checks what the token can do); microsoft.github.io/Threat-Matrix-for-Kubernetes (Access the K8S API server)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 3 · Discovery"
+    stage_ord: 3
+    platform: "Kubernetes audit logs"
+    title: "selfsubjectaccessreview / selfsubjectrulesreview bursts and 403 clusters are reconnaissance"
+    why: "A stolen token of unknown power is tested first: kubectl auth can-i drives bursts of selfsubjectaccessreviews and selfsubjectrulesreviews, and probing resources it may not reach produces clusters of 403 responses. A run of these from one identity, especially a service account, is the attacker learning the token's rights, not the workload's normal traffic. Ruled out when the reviews come from a controller or CI identity that legitimately checks its own permissions at startup."
+    how: null
+    fp: "Some operators and CI tools call SelfSubjectAccessReview at startup; baseline which identities do and keep the ones that do not, or whose volume or timing is new."
+    query: ""
+    tested: null
+    attack: ["T1613"]
+  - id: "kubernetes-compromise-response/proposed/execution-in-a-pod-is-confirmed-from-exec-audit-events-or-falco-not-absence-of-a"
+    status: "active"
+    source: "invictus-ir.com/news/incident-response-in-kubernetes-eks (kube exec abuse query: requestURI contains /exec); kubernetesforensics.com (What Kubernetes audit logs don't show); own notes 3a972b90 (Falco eBPF exec detection)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 4 · Execution"
+    stage_ord: 4
+    platform: "Falco"
+    title: "Command execution in a container is confirmed from pods/exec audit events or Falco, never from the audit log alone"
+    why: "The audit log records create or get on pods/exec and pods/attach, with the command in requestURI, so API-driven exec is visible there. It does not record commands typed in a shell once open, processes a kubelet exec started, or anything after a node escape. Execution inside a container is therefore confirmed from runtime telemetry (Falco process events) or the node, and the audit log's silence is not evidence that nothing ran. Ruled out when the exec maps to a named administrator and source IP doing documented work."
+    how: "Audit: filter the apiserver audit stream for requestURI containing /exec or /attach and correlate user and source IP. Runtime: Falco on each node flags a shell or interpreter spawned in a container. Velociraptor on the node captures the container process tree when audit and Falco disagree."
+    fp: "Administrators and CI legitimately exec into pods; correlate the identity and source IP, and treat exec from a service account or a public IP as the finding."
+    query: ""
+    tested: null
+    attack: ["T1609"]
+  - id: "kubernetes-compromise-response/proposed/secret-reads-across-namespaces-and-tokenrequest-calls-are-each-a-credential-to-ro"
+    status: "active"
+    source: "kubernetesforensics.com/en/blog/kubernetes-incident-response-audit-logs (What did it touch / leave behind); microsoft.github.io/Threat-Matrix-for-Kubernetes (List K8S secrets, Container service account)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 5 · Credential access"
+    stage_ord: 5
+    platform: "Kubernetes audit logs"
+    title: "Each secret read and each minted token is a credential to rotate, and some reach outside the cluster"
+    why: "list on secrets without a namespace, many get on secrets, and serviceaccounts/token (TokenRequest) calls are credential theft. Every secret read is a credential to rotate; cloud keys, registry pull secrets and CI tokens among them reach outside the cluster. A token minted through TokenRequest with a bound Pod or Secret dies with that object; one minted with no bound object (kubectl create token) authenticates until its expiry or until the ServiceAccount is deleted and recreated, so a TokenRequest call is both a theft and a persistence mechanism. Ruled out per secret only when the read maps to a workload that is expected to read it."
+    how: "List every verb and resource for the acting identity; pull the names of secrets read and the service accounts whose tokens were minted. Rotate what was read, and treat a token minted via TokenRequest as live until its bound object, if it has one, is deleted or the ServiceAccount is recreated. The boundObjectRef is in the audit event's requestObject when the audit level captured it; when it did not, assume no bound object."
+    fp: null
+    query: ""
+    tested: null
+    attack: ["T1552.007", "T1528"]
+  - id: "kubernetes-compromise-response/proposed/a-pod-reaching-the-cloud-metadata-service-hands-the-node-role-to-cloud-response"
+    status: "active"
+    source: "microsoft.github.io/Threat-Matrix-for-Kubernetes (Instance Metadata API); CrowdStrike 2026-10-29 (VAPOR PANDA queried the metadata service via XXE for a cloud role); docs.aws.amazon.com/eks/latest/best-practices/incident-response-and-forensics (revoke credentials assigned to the pod or node)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 5 · Credential access"
+    stage_ord: 5
+    platform: "Falco"
+    title: "A pod connecting to 169.254.169.254 means the node's cloud role is in scope"
+    why: "A pod reaching the cloud instance metadata address can read the node's instance-role credentials and use them outside the cluster. The VAPOR PANDA ARTEX agent did exactly this through an XXE flaw to obtain a role that could command thousands of instances. Once a pod has hit the metadata service, the node's cloud identity is compromised and its sessions are revoked in the cloud (cloud-incident-response), not only in the cluster. Ruled out when no pod egress to the metadata IP exists in the window and IMDSv2 hop-limit blocks pod access."
+    how: "Falco or CNI egress logs show pod connections to 169.254.169.254. Block the metadata address from pods and require IMDSv2 before redeploying. The node role's revocation and session-kill is a cloud action; hand off to cloud-incident-response scenario 5."
+    fp: null
+    query: ""
+    tested: null
+    attack: ["T1552.005"]
+  - id: "kubernetes-compromise-response/proposed/new-cluster-wide-bindings-and-escalate-bind-impersonate-rights-are-the-attackers"
+    status: "active"
+    source: "kubernetesforensics.com (Escalates privileges: new clusterrolebindings to cluster-admin, roles with escalate/bind/impersonate); nhimg.org/kubernetes-cluster-compromise-playbook (Map what that identity can do); invictus-ir.com (Privilege Escalation: create or patch on RoleBindings)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 6 · Escalation and escape"
+    stage_ord: 6
+    platform: "Kubernetes audit logs"
+    title: "New cluster-wide bindings, or escalate/bind/impersonate rights, are the attacker's API power"
+    why: "A create or patch on a ClusterRoleBinding to cluster-admin, or a Role or ClusterRole carrying escalate, bind or impersonate, grants the attacker cluster-wide power that outlives the first stolen credential. These are captured as evidence, then deleted, and the rights of any abused service account are stripped. Ruled out when the binding maps to a controller or a change ticket. Capture the object before deleting it; the audit record of its creation names who made it."
+    how: null
+    fp: "Operators, Rancher/Fleet and Flux create bindings continuously; keep the ones made by the acting identity or outside a reconciliation, and check the subject against what should hold cluster-admin."
+    query: ""
+    tested: null
+    attack: ["T1098.006"]
+  - id: "kubernetes-compromise-response/proposed/a-privileged-or-host-mounting-pod-means-the-node-is-compromised-and-is-rebuilt"
+    status: "active"
+    source: "nhimg.org/kubernetes-cluster-compromise-playbook (Check for escape; rebuild compromised nodes); kubernetesforensics.com (Escapes to the node: privileged, hostPID, hostPath of /); microsoft.github.io/Threat-Matrix-for-Kubernetes (Privileged container, Writable hostPath mount)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 6 · Escalation and escape"
+    stage_ord: 6
+    platform: "Kubernetes audit logs"
+    title: "A privileged or host-mounting pod created in the window means its node is compromised"
+    why: "A pod created with privileged: true, hostPID, hostNetwork, or a hostPath mount of / or the container runtime socket, is container escape to the node. The node that ran it is treated as compromised: its kubelet credential and every secret mounted on it are exposed, so it is rebuilt from a clean image rather than cleaned. Pod Security Admission enforcing restricted (or at least baseline) on the namespace blocks the technique; namespaces running enforce=privileged cannot, so a privileged pod there needs its workload confirmed. Ruled out when the pod is a known privileged system workload."
+    how: "Audit: create on pods with the privileged or hostPath fields in the request body (needs an audit level of Request or above for pod creation). Capture the pod spec with kubectl get pod -o yaml before deleting it. Cordon the node for evidence, drain only after capture, then replace it."
+    fp: "CNI, CSI, monitoring and backup agents legitimately run privileged or host-mounting pods; compare against the known set for that namespace."
+    query: ""
+    tested: null
+    attack: ["T1611"]
+  - id: "kubernetes-compromise-response/proposed/persistence-is-hunted-across-workloads-bindings-service-accounts-webhooks-and-leg"
+    status: "active"
+    source: "kubernetesforensics.com (What did it leave behind); kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin (legacy token Secrets never expire); microsoft.github.io/Threat-Matrix-for-Kubernetes (Backdoor container, CronJob, Static pods, Malicious admission controller)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 7 · Persistence"
+    stage_ord: 7
+    platform: "Kubernetes audit logs"
+    title: "Persistence outlives the first credential: bindings, service accounts, webhooks, DaemonSets, CronJobs, static pods and legacy token Secrets"
+    why: "Cutting the first stolen credential does not end the incident if the attacker left a way back: a new ServiceAccount and binding, a long-lived Secret-based token (type kubernetes.io/service-account-token, which never expires until deleted), a DaemonSet or CronJob, a static pod manifest on a node, a mutating admission webhook, or a changed image reference. Each is enumerated and removed. Ruled out for a given object only when it is accounted for by a controller, a chart or a change record. The legacy-token-last-used label shows which Secret-based tokens are still in use."
+    how: "Audit: writes (create, patch) on serviceaccounts, (cluster)rolebindings, roles, daemonsets, cronjobs, jobs, pods, validatingwebhookconfigurations and mutatingwebhookconfigurations by the acting identity. Static pods do not go through the API server; find them in the kubelet manifest directory on each node. Save every suspect object spec before deleting it, and search every namespace for copies."
+    fp: "Flux and Rancher create and patch these objects constantly; keep what the acting identity created or what falls outside a reconciliation."
+    query: ""
+    tested: null
+    attack: ["T1098.006", "T1053.007", "T1543"]
+  - id: "kubernetes-compromise-response/proposed/every-pod-on-a-poisoned-image-is-compromised-and-its-mounted-secrets-rotated"
+    status: "active"
+    source: "docs.aws.amazon.com/eks/latest/best-practices/incident-response-and-forensics (identify pods using a compromised image across all namespaces); CTI artex-backdoored-docker-image-root (2026-11-05; tomicdd/artex pre-auth root shell); microsoft.github.io/Threat-Matrix-for-Kubernetes (Compromised image in registry)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 7 · Persistence"
+    stage_ord: 7
+    platform: "kubectl"
+    title: "Every pod running a poisoned image is compromised, and every secret mounted into it is rotated"
+    why: "When an image is found malicious or its registry digest changed under it, every pod running that image is compromised regardless of per-pod evidence, and every secret, token and config mounted into those pods is rotated. The backdoored ARTEX image (tomicdd/artex, congdonglinux/artex) is the 2026-11 example: an unauthenticated root shell in the container with the database password and API keys in its environment. A re-pull does not remove an implant written to a mounted volume, and an updater pinned to the same tag reinstates it. Where the image came from is supply-chain-response; this owns the running pods. Ruled out when the running image digest matches a pipeline-built, signed artifact."
+    how: "List pods by image across all namespaces (kubectl get pods -A -o json then select .spec.containers[].image). Compare the running digest against the pipeline's signed digest, not the tag. For ARTEX specifically, compare the SHA-256 of /app/artex to d5070f52262effe216b840711343bff8f2787f39208d887d8dfd9c673f8d1573 (BadByte, 2026-11-04) and grep compose and Helm charts for tomicdd/artex or congdonglinux/artex."
+    fp: null
+    query: ""
+    tested: null
+    attack: ["T1525"]
+  - id: "kubernetes-compromise-response/proposed/deleted-kubernetes-events-or-a-stopped-audit-stream-is-evasion-not-quiet"
+    status: "active"
+    source: "microsoft.github.io/Threat-Matrix-for-Kubernetes (Delete K8S events, Clear container logs); kubernetesforensics.com (Covers tracks: delete/deletecollection on events)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 8 · Evasion"
+    stage_ord: 8
+    platform: "Kubernetes audit logs"
+    title: "Deleted Kubernetes events or a stopped audit stream is evasion, not quiet"
+    why: "delete or deletecollection on events, or a gap in the audit stream that coincides with the acting identity's window, is the attacker covering tracks, not an absence of activity. Because the audit log is the main record of API activity, an attempt to stop or narrow it is itself a high-signal event. Ruled out when the deletion is routine event TTL expiry or the gap is an apiserver restart accounted for elsewhere."
+    how: "Audit: delete and deletecollection on events, and changes to the audit configuration. A sudden stop in the audit stream is found by comparing event timestamps against wall-clock for the window; ship audit logs off-cluster so a local deletion does not also remove the evidence of it."
+    fp: "Kubernetes expires events by TTL (default one hour) on its own; the finding is a bulk delete by a non-system identity, not the steady expiry."
+    query: ""
+    tested: null
+    attack: ["T1070"]
+  - id: "kubernetes-compromise-response/proposed/a-contained-identity-that-still-authenticates-means-a-token-was-bound-to-somethi"
+    status: "active"
+    source: "kubernetes.io/docs/concepts/security/service-accounts (deleting the Pod invalidates its bound token; TokenReview fails immediately); kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin (no central record, recreate the ServiceAccount to change its UID); nhimg.org/kubernetes-cluster-compromise-playbook (Recovery)"
+    validated_at: "2026-11-07"
+    supersedes: null
+    stage: "Stage 9 · Still active"
+    stage_ord: 9
+    platform: "Kubernetes audit logs"
+    title: "A contained identity that still authenticates means a token was bound to something that was not deleted"
+    why: "Containment of a Kubernetes identity is verified, not assumed, because there is no token-revocation call. A bound token stops authenticating only when its bound object is gone: delete the Pod for a projected token, delete the Secret for a legacy token, delete and recreate the ServiceAccount to change its UID and kill all of its tokens. Any authenticated request by a contained identity after the containment timestamp means a token was bound to an object that still exists, or a copy is held and its binding was not removed. Closed only when no old token authenticates, every reachable secret is rotated, no persistence remains, and audit logging is confirmed working."
+    how: "Audit: alert on any authenticated request by the contained identity after the containment time, whatever its response code: once the identity's rights are stripped a still-valid token is answered 403, and that is the token being accepted. Watch for at least 30 days for failed authentications with old tokens, new ClusterRoleBindings, privileged pod creation and egress to unknown hosts. A legacy Secret-based token in use is marked on its audit events by the authentication.k8s.io/legacy-token-manual-secret annotation (legacy-token-autogenerated-secret when the Secret was auto-generated); legacy-token-invalidated appears only when a token the cleanup controller already marked invalid is presented and refused, so its absence proves nothing."
+    fp: null
+    query: ""
+    tested: null
+    attack: []
+steps:
+  - ord: 1
+    time: "T+0–10 min"
+    title: "Confirm the audit log exists and export it off-cluster before touching anything"
+    why: "The kube-apiserver logs nothing unless an audit policy is configured, and pod and node logs vanish when a pod crashes or a node is replaced. Export the audit log for the whole suspected window and store it outside the cluster, extend its retention, and save the specs of suspect objects (kubectl get <kind> <name> -o yaml) before any deletion. A controller recreates a deleted pod within seconds, taking its evidence with it. Every minute without preserved logs is a minute you cannot scope later."
+    critical: true
+  - ord: 2
+    time: "T+0–15 min"
+    title: "Declare, name one incident lead, hold the break-glass credential out of band"
+    why: "If the attacker can modify RBAC, your normal admin route may already be watched or altered, so the break-glass cluster-admin is held out of band and used for containment. One decision owner stops two responders cutting in conflicting ways, or one deleting the attacker's objects before they are preserved."
+    critical: true
+  - ord: 3
+    time: "T+0–15 min"
+    title: "Classify the acting identity before acting"
+    why: "From the audit events, decide which identity is acting: a human kubeconfig, a cloud IAM identity mapped into the cluster, a service account, or anonymous. The kind of identity decides how it is cut off — a service account token cannot be revoked and dies with its bound object or on ServiceAccount recreation, a cloud identity is revoked in the cloud, a human kubeconfig backed by OIDC is revoked at the identity provider, and a certificate-based kubeconfig cannot be revoked at all: issuing a new one leaves the stolen certificate valid until it expires, so its rights are removed by deleting every binding that names its CN or group, and when it carries O=system:masters, by rotating the client CA. Answer this, then pick the scenario in ir_classify."
+    critical: true
+  - ord: 4
+    time: "T+15–45 min"
+    title: "Contain from the outside in: external access, then identities, then workloads, then nodes"
+    why: "Cut external reach to the API server, kubelet and dashboards first; then remove attacker-created bindings and strip rights from abused service accounts; then isolate suspect pods with a deny-all NetworkPolicy and delete the pods or Secrets that bound the stolen tokens; then cordon affected nodes. Record every change so it can be reversed. Where a token is actively being abused, deleting its bound object to invalidate it wins over keeping the pod for evidence — capture the spec first."
+    critical: true
+  - ord: 5
+    time: "T+15–45 min"
+    title: "Invalidate the stolen tokens the only way the API server allows"
+    why: "There is no call to revoke an issued token. Delete the Pod to expire a projected token; delete the Secret to kill a legacy token; delete and recreate the ServiceAccount to change its UID and invalidate all of its tokens at once. A cloud identity mapped into the cluster is revoked in the cloud in parallel. Confirm with TokenReview that the token now fails, rather than assuming the deletion took effect."
+    critical: true
+  - ord: 6
+    time: "T+30–90 min"
+    title: "Rebuild compromised nodes; do not clean them"
+    why: "A node that ran a privileged or host-mounting pod, or that an attacker reached as root, has exposed kubelet credentials and every secret mounted on it. Cordon it, capture node memory and disk through Velociraptor or a snapshot, drain after capture, then destroy the instance or stop its kubelet, delete the old Node object only after that, replace it from a clean image under a new node name and rotate its cloud credentials. The old kubelet client certificate cannot be revoked, and whoever holds it can re-register Node/<old> and, where self-node-client CSRs are auto-approved, renew it before it expires; deleting the Node object alone cuts nothing off. Until the client CA is rotated, an admission policy denies system:node:<old> any create or update on nodes, certificatesigningrequests and leases, and the closure check alerts on any request as that identity from the moment the instance is gone. If CSR auto-approval is on, rotate the client CA regardless of expiry. Cleaning a node in place leaves implants you will not find."
+    critical: true
+  - ord: 7
+    time: "T+1–4 h"
+    title: "Rotate every reachable secret and, if the control plane was reached, the cluster keys"
+    why: "Rotate every secret the attacker's identities could read: Kubernetes Secrets, registry pull secrets, database and API credentials, and cloud keys stored in pods. If cluster-admin, etcd or the service account signing key was reached, or a stolen client certificate carries system:masters, rotate the cluster CA, the client CA and the service account signing keys or rebuild the cluster from infrastructure as code — for a small estate, rebuilding is quicker and more certain than proving a cluster clean. For an agent-driven (ARTEX-class) intrusion, rotate on the first confirmed reach rather than waiting to prove each path, because the intrusion moves faster than per-path investigation."
+    critical: true
+  - ord: 8
+    time: "T+0–60 min"
+    title: "Scope the cloud and registry boundary the cluster trusts"
+    why: "A pod that reached the metadata service, a node instance role, a CI identity bound into the cluster, or the image registry can carry the incident outside Kubernetes. Review the cloud audit log (CloudTrail, Cloud Audit Logs, Azure Activity) for use of node and workload-identity roles, and the registry for pulls of images not built by your pipeline. Hand the cloud-side credential revocation to cloud-incident-response and the image provenance to supply-chain-response."
+    critical: false
+actions:
+  - platform: "kubectl"
+    label: "T+0–10 · Preserve"
+    name: "Save the specs of suspect objects and the acting identity's reach before deleting anything"
+    tier: "read"
+    tier_inferred: false
+    why: "deleting a binding or pod to contain also destroys the record of what it was; the -o yaml dumps and the RBAC listing are the only before-state once containment starts. A controller recreates a deleted pod within seconds, so capture first."
+    how: "Run against the break-glass context. Export the apiserver audit log for the window off-cluster in parallel (managed: export the api, audit and authenticator streams; self-managed: copy the file at --audit-log-path). If audit logging is off, enabling it is a control-plane configuration write that belongs in incident step 1, not in this read block."
+    body: |-
+      ns=<namespace>; sa=<service-account>; ts=$(date -u +%Y%m%dT%H%MZ)   # one stamp for the whole capture
+      kubectl get clusterrolebindings,rolebindings -A -o yaml > ir-bindings-$ts.yaml
+      kubectl get pods,deployments,replicasets,statefulsets,daemonsets,cronjobs,jobs -A -o yaml > ir-workloads-$ts.yaml
+      kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o yaml > ir-webhooks-$ts.yaml
+      kubectl get roles,clusterroles,serviceaccounts -A -o yaml > ir-rbac-$ts.yaml
+      kubectl get secrets -A -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,TYPE:.type > ir-secrets-meta-$ts.txt   # names and types only
+      # every pod running the stolen service account, and the node each is on
+      kubectl get pods -A -o json | jq -r --arg sa "$sa" --arg ns "$ns" \
+        '.items[] | select(.spec.serviceAccountName==$sa and .metadata.namespace==$ns) | "\(.metadata.name) \(.spec.nodeName)"'
+    attack: []
+  - platform: "kubectl"
+    label: "T+15–30 · Isolate"
+    name: "Cut a suspect pod's network with a deny-all NetworkPolicy, keeping it for evidence"
+    tier: "write"
+    tier_inferred: false
+    why: "a deny-all policy severs the pod's connection to its command channel while keeping it running for memory and process capture, unlike deleting it. NetworkPolicy is additive: this works only if the CNI enforces it and no other policy still selects the pod, because any policy whose podSelector matches keeps every allowance it grants. A policy with an empty podSelector (the common allow-dns and allow-same-namespace) or a cluster-scoped policy (AdminNetworkPolicy, Calico GlobalNetworkPolicy, Cilium ClusterwideNetworkPolicy) selects the pod whatever its labels, and then no pod policy isolates it: isolate the node or the CNI endpoint instead. If the attacker is on the node, the same applies. Dropping the labels other policies match also releases the pod from its owner, and the controller spawns a replacement from the same template: that is the next block, and it is destructive."
+    how: "List the namespace policies and the cluster-scoped ones first, one resource type per call so a missing CRD reports as not installed instead of silently emptying the list, and note every selector that matches the suspect pod; an empty podSelector cannot be escaped by relabelling. Apply the quarantine label and the deny-all first, which never widens access, then drop the labels other policies and the Service match so nothing else selects the pod. Confirm from an ephemeral debug container with a trusted image that TCP and DNS egress both fail; a check run with the suspect container's own binaries can be lied to, a missing binary looks like a blocked connection, and the probe target is one address, so a perimeter block on it reads as blocked while other routes stay open. The debug container stays in the evidence pod's spec; note it in the record."
+    body: |-
+      # 1. what already selects this pod: any matching policy keeps its allowances; an empty podSelector matches it whatever its labels
+      kubectl get networkpolicy -n <namespace> -o yaml
+      for t in adminnetworkpolicy baselineadminnetworkpolicy ciliumnetworkpolicy ciliumclusterwidenetworkpolicy \
+               networkpolicies.crd.projectcalico.org globalnetworkpolicies.crd.projectcalico.org; do
+        out=$(kubectl get "$t" -A -o yaml 2>&1) && echo "$out" \
+          || { echo "$out" | grep -q "doesn't have a resource type" && echo "$t: not installed" || echo "$t: ERROR: $out"; }
+      done
+      kubectl get pod <pod> -n <namespace> --show-labels -o wide
+      # 2. quarantine first: adding a policy never widens access
+      kubectl label pod <pod> -n <namespace> quarantine=ir --overwrite
+      cat <<'YAML' | kubectl apply -f -
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata: { name: ir-deny-all, namespace: <namespace> }
+      spec:
+        podSelector: { matchLabels: { quarantine: ir } }
+        policyTypes: [Ingress, Egress]
+      YAML
+      # 3. drop every label another policy's podSelector or the Service matches (repeat per key). A dropped label that is in
+      #    the owner's selector releases the pod and the controller spawns a replacement: the next block handles that
+      kubectl label pod <pod> -n <namespace> <label-key>-
+      # 4. confirm from a trusted image sharing the pod's network namespace; both lines must say blocked (-i attaches so they print)
+      kubectl debug -i -q -n <namespace> <pod> --image=<trusted-netshoot-image@sha256:digest> --target=<container> -- sh -c \
+        'timeout 5 nc -zw3 1.1.1.1 443 >/dev/null 2>&1 && echo "TCP EGRESS STILL OPEN" || echo "tcp blocked (rc=$?)"; \
+         timeout 5 nslookup example.com >/dev/null 2>&1 && echo "DNS EGRESS STILL OPEN" || echo "dns blocked (rc=$?)"'
+    attack: []
+  - platform: "kubectl"
+    label: "T+15–30 · Isolate"
+    name: "Scale the released suspect's owner to zero, which deletes the replacement and every other replica"
+    tier: "destructive"
+    tier_inferred: false
+    why: "once the suspect is released from its owner, the controller has already spawned a replacement from the same template, and that template is what is under suspicion. Scaling the owner to zero deletes the replacement and every other replica of the workload with their memory and emptyDir data, so that workload is down until containment ends; when the image is poisoned (scenario 5) each replica is evidence too and is saved and collected before this runs. The released suspect pod is untouched only if its ownerReferences are gone; otherwise this deletes it with the evidence, which is what the first line checks."
+    how: "ownerReferences must be empty; if not, drop a label that is in the owner's selector (kubectl get <kind> <owner> -n <namespace> -o jsonpath='{.spec.selector}') and re-check. Scale the top of the owner chain, not the pod's direct owner: a Deployment's pod is owned by a ReplicaSet, and the Deployment scales that ReplicaSet straight back up. <kind> is deployment, statefulset, or a ReplicaSet with no owner of its own. A DaemonSet cannot be scaled and recreates a deleted pod on the same node: quarantine its replacement with the same label and policy, and it goes with the node at drain. A StatefulSet spawns no replacement for a released pod, because the replacement needs the ordinal name the released pod still holds; it stalls instead, and recovery after containment needs the evidence pod deleted or renamed first. Whatever reconciles the top owner puts the replicas back (Flux, Argo CD, an operator), so suspend it before scaling and check the replica count again after."
+    body: |-
+      # 1. must print nothing; an ownerReference still present means the scale below deletes the suspect with its evidence
+      kubectl get pod <pod> -n <namespace> -o jsonpath='{.metadata.ownerReferences}'
+      # 2. the other replicas are evidence when the template is what is suspect: save them, and collect them through Velociraptor if the image is poisoned
+      kubectl get pods -n <namespace> -l <owner-selector> -o yaml > ir-replicas-<owner>-$(date -u +%Y%m%dT%H%MZ).yaml
+      # 3. walk to the top of the owner chain, repeating until it prints TOP/: a ReplicaSet owned by a Deployment is scaled back up within seconds if scaled itself
+      kubectl get <owner-kind> <owner> -n <namespace> -o json | jq -r '(.metadata.ownerReferences // []) | first // {kind:"TOP",name:""} | "\(.kind)/\(.name)"'
+      # 4. whatever reconciles the top owner restores the replicas: suspend it first (Flux: flux suspend kustomization|helmrelease <name>;
+      #    Argo CD: argocd app set <app> --sync-policy none; an operator CR: scale at the CR, kubectl scale errors on a CR without a scale subresource)
+      # 5. deletes every replica of the workload; the released suspect stays
+      kubectl scale <top-kind> <top-owner> -n <namespace> --replicas=0
+      sleep 30; kubectl get <top-kind> <top-owner> -n <namespace> -o jsonpath='{.spec.replicas}'   # must still print 0
+    attack: []
+  - platform: "kubectl"
+    label: "T+15–30 · Revoke"
+    name: "Delete attacker-created bindings and strip rights from the abused service account"
+    tier: "destructive"
+    tier_inferred: false
+    why: "removing the ClusterRoleBinding to cluster-admin and any escalate/bind/impersonate grant takes away the API power that outlives the stolen token. Capture the objects first (preserve action above); the deletion is irreversible and the audit record of their creation is the evidence of who made them."
+    how: null
+    body: |-
+      kubectl get clusterrolebinding <attacker-binding> -o yaml > evidence-$(date -u +%Y%m%dT%H%MZ).yaml
+      kubectl delete clusterrolebinding <attacker-binding>
+      # every binding, namespaced or cluster-wide, that names the service account directly
+      kubectl get rolebindings,clusterrolebindings -A -o json | jq -r --arg sa "<service-account>" --arg ns "<namespace>" \
+        '.items[] | select(any(.subjects[]?; .kind=="ServiceAccount" and .name==$sa and .namespace==$ns))
+         | "\(.kind|ascii_downcase)/\(.metadata.name) \(.metadata.namespace // "")"'
+      # strip only the abused service account from each; the other subjects keep their rights. The group subjects
+      #    system:serviceaccounts and system:serviceaccounts:<ns> grant it too and are reviewed by hand
+      for b in "<rolebinding/name> <ns>" "<clusterrolebinding/name>"; do set -- $b
+        kubectl get "$1" ${2:+-n "$2"} -o json \
+          | jq --arg sa "<service-account>" --arg ns "<namespace>" 'del(.subjects[]? | select(.kind=="ServiceAccount" and .name==$sa and .namespace==$ns))' \
+          | kubectl apply -f -
+        kubectl get "$1" ${2:+-n "$2"} -o jsonpath='{range .subjects[*]}{.namespace}/{.name}{"\n"}{end}'   # the abused one must be gone
+      done
+    attack: ["T1098.006"]
+  - platform: "kubectl"
+    label: "T+15–45 · Revoke"
+    name: "Invalidate stolen service account tokens the only way the API server allows"
+    tier: "destructive"
+    tier_inferred: false
+    why: "there is no revoke call. A projected token dies when its Pod is deleted; a legacy token when its Secret is deleted; all tokens of a ServiceAccount when the ServiceAccount is deleted and recreated, because the UID changes. Deleting the Pod is the least disruptive when a controller will reschedule it clean; recreating the ServiceAccount is the hammer when tokens were minted via TokenRequest and you do not know how many. A deployment using the service account must be restarted to pick up a new token after recreation."
+    how: "Choose the one path that matches the token in hand; the three lines are alternatives, not a sequence. Before deleting, record the pod UID (kubectl get pod <pod> -n <ns> -o jsonpath='{.metadata.uid}'); after the controller reschedules, the closure check builds its list of legitimate pod UIDs and IPs from what is running then. Confirm the kill with a TokenReview: submit the stolen token and expect authenticated:false. For a legacy token, find its Secret via the ServiceAccount's secrets field."
+    body: |-
+      # choose ONE path for the token in hand; these are alternatives, not a sequence
+      # projected token: delete the bound pod (controller reschedules a clean one)
+      kubectl delete pod <pod> -n <namespace>
+      # legacy Secret-based token: delete the Secret
+      kubectl delete secret <sa-token-secret> -n <namespace>
+      # all tokens of a service account: recreate it to change its UID, then restart its workloads
+      # the dump must lose resourceVersion, uid, creationTimestamp, managedFields and the secrets list, or the create after the delete is refused and the SA stays gone
+      kubectl get serviceaccount <sa> -n <namespace> -o json \
+        | jq 'del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.managedFields, .secrets)' > sa-backup.json
+      kubectl delete serviceaccount <sa> -n <namespace> && kubectl apply -f sa-backup.json
+      kubectl get serviceaccount <sa> -n <namespace> -o jsonpath='{.metadata.uid}'   # must print a new UID
+      # every workload using the service account must restart to pick up a new token; list them, then restart each
+      kubectl get deploy,sts,ds,cronjob -n <namespace> -o json | jq -r --arg sa "<sa>" \
+        '.items[] | ((.spec.template // .spec.jobTemplate.spec.template).spec | (.serviceAccountName // .serviceAccount // "default")) as $s
+         | select($s==$sa) | "\(.kind|ascii_downcase)/\(.metadata.name)"'   # unset means default
+      kubectl rollout restart <kind>/<name> -n <namespace>
+    attack: ["T1528"]
+  - platform: "kubectl"
+    label: "T+15–30 · Contain"
+    name: "Tighten pod admission in the affected namespaces, in warn and audit mode first"
+    tier: "write"
+    tier_inferred: false
+    why: "warn and audit labels report which workloads a later enforce would block, without blocking anything yet; the exposed API server, kubelet or dashboard that was the entry is closed elsewhere. No kubectl command closes a kubelet or an API endpoint: the kubelet is fixed in its own configuration on each node and the endpoint at the cloud or firewall layer. This block blocks nothing: warn and audit only report. Until enforce is set, new privileged pods are still admitted, so the Stage 6 hunt for privileged or hostPath pod creation keeps running by hand in the meantime; that criterion names the audit fields in its how and carries no stored query."
+    how: "Close the surface where it lives: remove public LoadBalancers and ExternalIPs from dashboards and the API endpoint; restrict the API server to admin networks at the cloud or firewall layer, after confirming which CI systems call it from outside; set the kubelet to --anonymous-auth=false and --authorization-mode=Webhook (k3s: --kubelet-arg) and restart it. Then run this block. Read the namespace's current labels first and skip any level it already carries at restricted: --overwrite sets baseline whatever was there, which would loosen it. The server-side dry run is the report on the pods already running; warn and audit only fire on pods created or updated afterwards. Move to enforce=baseline in a separate second run only once that dry-run output is clean: a namespace that legitimately runs privileged pods loses them."
+    body: |-
+      # 1. current levels: a label already at restricted is left alone, --overwrite below would lower it to baseline
+      kubectl get namespace <namespace> --show-labels
+      # 2. what enforce=baseline would block among the pods already running; changes nothing
+      kubectl label --dry-run=server --overwrite namespace <namespace> pod-security.kubernetes.io/enforce=baseline
+      # 3. report on new pods from here on
+      kubectl label --overwrite namespace <namespace> \
+        pod-security.kubernetes.io/warn=baseline pod-security.kubernetes.io/audit=baseline
+      # second run, after the dry-run output is clean and reviewed, and only if enforce is not already restricted:
+      #   kubectl label --overwrite namespace <namespace> pod-security.kubernetes.io/enforce=baseline
+    attack: []
+  - platform: "kubectl"
+    label: "T+30–60 · Isolate"
+    name: "Cordon a suspect node so nothing new lands on it while its pods keep running for capture"
+    tier: "write"
+    tier_inferred: false
+    why: "cordon marks the node unschedulable and changes nothing else: the suspect pods keep running, which is what memory and process-tree capture need. Drain is the opposite, it evicts them, and belongs in its own step after the capture is confirmed."
+    how: "Cordon first, then collect through Velociraptor (next block), then drain (the block after). Record the node's name and its kubelet certificate's expiry: the certificate cannot be revoked, so the rebuilt node gets a new name and the old identity is denied by admission policy and watched by the closure check until the client CA is rotated or the certificate has expired."
+    body: |-
+      kubectl cordon <node>
+      kubectl get pods -A --field-selector spec.nodeName=<node> -o wide > ir-node-<node>-pods-$(date -u +%Y%m%dT%H%MZ).txt
+    attack: []
+  - platform: "Velociraptor"
+    label: "T+30–60 · Capture"
+    name: "Collect node memory and the container process tree through Velociraptor before anything is evicted"
+    tier: "write"
+    tier_inferred: false
+    why: "the API server audit log does not see processes inside containers or on the node, so a node suspected of escape is captured at the host while the suspect pods still run. Memory acquisition writes to the node and ships a large file, so it is approved rather than automatic. A node reached as root is rebuilt, not cleaned."
+    how: "Assumes a Velociraptor client on every node. Start the collection from the server (GUI, or the API client below), wait for the flow to finish, then snapshot the node disk at the hypervisor or cloud layer. Only then drain."
+    body: |-
+      # from a host holding the Velociraptor API client config
+      velociraptor --api_config api.config.yaml query \
+        'SELECT collect_client(client_id="<client-id>", artifacts=["Linux.Memory.Acquisition", "Linux.Sys.Pslist"]) FROM scope()'
+      # confirm the flow finished before draining
+      velociraptor --api_config api.config.yaml query \
+        'SELECT state, total_collected_rows FROM flows(client_id="<client-id>") ORDER BY create_time DESC LIMIT 3'
+    attack: ["T1611"]
+  - platform: "kubectl"
+    label: "T+60–120 · Isolate"
+    name: "Drain the node only after the Velociraptor collection is confirmed complete"
+    tier: "destructive"
+    tier_inferred: false
+    why: "drain evicts every pod and --delete-emptydir-data destroys their emptyDir volumes, so it runs after the capture it would otherwise erase. The node is then replaced from a clean image under a new name, its cloud credentials are rotated, and its kubelet certificate, which cannot be revoked and can re-register the old Node name, is denied by admission policy (next block) and watched for by the closure check until the client CA is rotated."
+    how: "Check the Velociraptor flow state first. --force is required: the quarantined pod was orphaned from its controller and a bare attacker pod never had one, and drain refuses to evict either without it. DaemonSet pods (Falco, the Velociraptor client) stay; the flag ignores them and they go with the node."
+    body: |-
+      kubectl drain <node> --ignore-daemonsets --delete-emptydir-data --force
+    attack: []
+  - platform: "kubectl"
+    label: "T+60–120 · Revoke"
+    name: "Deny the old node identity and delete its Node object only after the instance is gone"
+    tier: "destructive"
+    tier_inferred: false
+    why: "a kubelet client certificate cannot be revoked, and a credential in the system:nodes group can register the Node named for itself: a running kubelet re-registers within seconds of the Node object being deleted, and a stolen certificate can do the same later and, where self-node-client CSRs are auto-approved, renew itself before expiry. Destroying the instance stops the first; the admission policy stops the second until the client CA is rotated or the certificate has expired. Deleting the Node object is the destructive step, and it comes last."
+    how: "If the CSR auto-approval check prints a binding, plan the client CA rotation now; the policy below only covers the gap. Replace <old-node-name> in the policy before applying. Remove the policy after the CA rotation or the certificate's expiry, whichever comes first."
+    body: |-
+      # self-node-client CSR auto-approval lets a stolen kubelet certificate renew itself: a printed binding means rotate the client CA
+      kubectl get clusterrolebinding -o json | jq -r '.items[] | select(.roleRef.name | test("selfnodeclient|nodeclient")) | .metadata.name'
+      # deny the old node identity any write on its own objects until the CA is rotated or the certificate has expired
+      cat <<'YAML' | kubectl apply -f -
+      apiVersion: admissionregistration.k8s.io/v1
+      kind: ValidatingAdmissionPolicy
+      metadata: { name: ir-deny-old-node }
+      spec:
+        failurePolicy: Fail
+        matchConstraints:
+          resourceRules:
+            - apiGroups: ["", "certificates.k8s.io", "coordination.k8s.io"]
+              apiVersions: ["*"]
+              operations: ["CREATE", "UPDATE"]
+              resources: ["nodes", "nodes/status", "certificatesigningrequests", "leases"]
+        validations:
+          - expression: "request.userInfo.username != 'system:node:<old-node-name>'"
+            message: "identity of a decommissioned node"
+      ---
+      apiVersion: admissionregistration.k8s.io/v1
+      kind: ValidatingAdmissionPolicyBinding
+      metadata: { name: ir-deny-old-node }
+      spec:
+        policyName: ir-deny-old-node
+        validationActions: [Deny]
+      YAML
+      # the instance must be gone before the Node object goes, or the running kubelet re-registers it
+      kubectl delete node <old-node-name>
+    attack: []
+  - platform: "Kubernetes audit logs"
+    label: "T+after containment · Verify"
+    name: "Alert on any authenticated request by the contained identity after the containment time"
+    tier: "read"
+    tier_inferred: false
+    why: "containment of a Kubernetes identity has no revoke call to trust, so it is verified: an authenticated request by the contained identity after the containment timestamp, a 403 included, means a token was bound to an object that still exists or a copy is in use. This is the closure test for the incident."
+    how: "Run against the exported audit stream (and keep it running on the live stream for 30 days). The containment time must be UTC ending in Z: the first line refuses anything else, because a bad value makes every record error on stderr and the run look clean. Both sides are then normalised to whole seconds, so fractional precision does not matter and the containment second itself is included. After the ServiceAccount is recreated the legitimate pods authenticate under the same username, so legitimacy is a pod-uid and source-IP pair: rebuild ir-legit-pods.json from the pods running now after every restart. Anything else is the alert: a token with no bound object (pod-uid none), a token bound to an object that still exists, or a copy of a current pod's token used from any other address, which is what an attacker who re-reads the rescheduled pod's token looks like. A pod the acting identity created with the service account is Running too and would enter the set, so the set keeps only pods whose controller is not among the objects the acting identity created or changed at any point in the window, taken from the audit log itself rather than from a dump; the sign-off line prints what went in and what stayed out, and a bare pod with no controller never goes in. On hostNetwork or behind NAT the source IP is the node's; note that before trusting a match. A drained node's kubelet certificate cannot be revoked, so the old node name is watched as well."
+    body: |-
+      # the containment time must be UTC ending in Z, or every record errors to stderr and the run looks clean
+      jq -n --arg t "<containment-UTC-RFC3339>" 'if ($t|test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$")) then empty else error("containment timestamp must be UTC ending in Z") end'
+      # owners the acting identity created or changed anywhere in the window: nothing they own is legitimate, whatever any dump says
+      jq -r --arg who "system:serviceaccount:<ns>:<sa>" \
+        'select((.user.username==$who or .impersonatedUser.username==$who) and (.verb|IN("create","patch","update"))
+                and (.objectRef.resource|IN("deployments","replicasets","statefulsets","daemonsets","jobs","cronjobs","pods")))
+         | .objectRef.name' audit-*.log | sort -u | jq -R . | jq -s . > ir-attacker-owners.json
+      # legitimate set: pods running the service account now whose controller is not one of those (a ReplicaSet or Job carries its
+      #    parent's name as a prefix), uid -> podIP. Snapshot after every restart and merge: a pod replaced since containment stays
+      #    legitimate for the window it was running
+      kubectl get pods -n <ns> -o json > ir-pods-now.json
+      jq --arg sa "<sa>" --slurpfile bad ir-attacker-owners.json \
+        '[.items[] | select((.spec.serviceAccountName // "default")==$sa and .status.phase=="Running")
+          | ((.metadata.ownerReferences // []) | map(select(.controller==true)) | first) as $own
+          | select($own != null and (any($bad[0][]; . as $b | $own.name == $b or ($own.name | startswith($b + "-"))) | not))
+          | {key: .metadata.uid, value: .status.podIP}] | from_entries' ir-pods-now.json > ir-legit-pods-$(date -u +%Y%m%dT%H%M%SZ).json
+      jq -s add ir-legit-pods-*.json > ir-legit-pods.json
+      # sign-off: every pod on the service account with its controller; compare against ir-legit-pods.json and ir-attacker-owners.json
+      jq -r --arg sa "<sa>" '.items[] | select((.spec.serviceAccountName // "default")==$sa)
+        | "\(.metadata.name) uid=\(.metadata.uid) owner=\(((.metadata.ownerReferences // []) | map(select(.controller==true)) | first // {kind:"none",name:"-"}) | .kind + "/" + .name)"' ir-pods-now.json
+      # jq over exported audit JSONL: any authenticated request by the identity (direct or impersonated), a 403 included, that is not a known pod calling from its own IP
+      jq -r --arg who "system:serviceaccount:<ns>:<sa>" --arg t "<containment-UTC-RFC3339>" --slurpfile legit ir-legit-pods.json \
+        'def ts: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;
+         select((.user.username==$who or .impersonatedUser.username==$who) and (.requestReceivedTimestamp | ts) >= ($t | ts))
+         | ((.user.extra["authentication.kubernetes.io/pod-uid"] // ["none"])[0]) as $uid
+         | (.sourceIPs|last) as $ip
+         | select(($legit[0][$uid] // "none") != $ip)
+         | "\(.requestReceivedTimestamp) \(.verb) \(.objectRef.resource) code=\(.responseStatus.code // "none") pod-uid=\($uid) from=\($ip)"' \
+        audit-*.log
+      # a drained node's kubelet certificate cannot be revoked: any request as the old node after the instance was destroyed is the
+      #    alert (before that, its own kubelet heartbeats as it); run this until the certificate has expired or the client CA is rotated
+      jq -r --arg node "system:node:<old-node-name>" --arg t "<instance-destroyed-UTC-RFC3339>" \
+        'def ts: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;
+         select(.user.username==$node and (.requestReceivedTimestamp | ts) >= ($t | ts)) | "\(.requestReceivedTimestamp) \(.verb) \(.objectRef.resource) \(.sourceIPs|last)"' \
+        audit-*.log
+    attack: []
